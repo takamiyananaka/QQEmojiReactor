@@ -1,0 +1,56 @@
+# Built application files
+*.apk
+*.aar
+*.ap_
+*.aab
+
+# Gradle & Build artifacts
+.gradle/
+.gradle_home/
+build/
+app/build/
+.gradletasknamecache
+
+# Local configuration & environment
+local.properties
+.idea/
+*.iml
+.DS_Store
+
+# IDE & Editors
+.vscode/
+*.ipr
+*.iws
+out/
+
+# Android NDK & Native builds
+.cxx/
+.externalNativeBuild/
+
+# Standalone compilation & Bytecode
+*.class
+
+# Memory dumps & Profiling
+*.hprof
+
+# Keystores & Signing secrets (严防私有签名秘钥误入公开仓库)
+*.jks
+*.keystore
+*.key
+
+# Windows / OS metadata
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# User internal guides & local specifications (严格本地隔离，绝不上云)
+AGENTS.md
+
+# Temporary test artifacts & dumps
+*.xml.dump
+*.log
+*.tmp
+temp/
+captures/
+.tools/
+qq_emoji_pack/

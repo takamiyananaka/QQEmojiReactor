@@ -1,0 +1,15 @@
+<resources>
+    <color name="primary">#2196F3</color>
+    <color name="primary_dark">#1976D2</color>
+    <color name="accent">#FF4081</color>
+    <color name="background">#121212</color>
+    <color name="surface">#1E1E1E</color>
+    <color name="card_background">#242424</color>
+    <color name="card_stroke">#383838</color>
+    <color name="text_primary">#F7FAFC</color>
+    <color name="text_secondary">#A0AEC0</color>
+    <color name="divider">#2D3748</color>
+    <color name="preview_bg">#1A1A1A</color>
+    <color name="selected_overlay">#402196F3</color>
+    <color name="selected_badge">#2196F3</color>
+</resources>

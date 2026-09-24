@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingVertical="8dp"
+    android:paddingHorizontal="12dp">
+
+    <TextView
+        android:id="@+id/tv_order_index"
+        android:layout_width="36dp"
+        android:layout_height="wrap_content"
+        android:text="1."
+        android:textColor="@color/text_secondary"
+        android:textSize="15sp"
+        android:textStyle="bold" />
+
+    <!-- 小黄脸展示 -->
+    <ImageView
+        android:id="@+id/iv_selected_emoji"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:adjustViewBounds="true"
+        android:contentDescription="已选表情"
+        android:scaleType="fitCenter" />
+
+    <!-- 原生 Emoji 字符展示 -->
+    <TextView
+        android:id="@+id/tv_selected_emoji_char"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:gravity="center"
+        android:textColor="@color/text_primary"
+        android:textSize="28sp"
+        android:visibility="gone" />
+
+    <View
+        android:layout_width="0dp"
+        android:layout_height="1dp"
+        android:layout_weight="1" />
+
+    <ImageButton
+        android:id="@+id/btn_remove_selected_emoji"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="移除表情"
+        android:src="@android:drawable/ic_delete" />
+
+</LinearLayout>

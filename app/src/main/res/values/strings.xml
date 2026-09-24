@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">菜々華</string>
+    <string name="xposed_desc">QQ群消息自动化批量贴表情模块，长按消息一键快速贴上预设的系统小黄脸表情。</string>
+    <string name="action_about">关于</string>
+    <string name="about_title">关于 菜々華 (nanaka)</string>
+    <string name="about_license">开源许可证：GNU General Public License v3.0 (GPL-3.0-or-later)</string>
+</resources>

@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">nanaka</string>
+    <string name="xposed_desc">Automated batch emoji reaction module for QQ NT group chats.</string>
+    <string name="action_about">About</string>
+    <string name="about_title">About nanaka (菜々華)</string>
+    <string name="about_license">License: GNU General Public License v3.0 (GPL-3.0-or-later)</string>
+</resources>

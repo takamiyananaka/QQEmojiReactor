@@ -1,0 +1,9 @@
+<resources>
+    <!-- 使用 NoActionBar 彻底消除与 Activity 内部 Toolbar 的冲突，杜绝闪退 -->
+    <style name="Theme.QQEmojiReactor" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/primary</item>
+        <item name="colorPrimaryDark">@color/primary_dark</item>
+        <item name="colorAccent">@color/accent</item>
+        <item name="android:windowBackground">@color/background</item>
+    </style>
+</resources>
