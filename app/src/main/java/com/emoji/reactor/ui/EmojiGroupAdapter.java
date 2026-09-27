@@ -66,22 +66,34 @@ public class EmojiGroupAdapter extends RecyclerView.Adapter<EmojiGroupAdapter.Vi
         List<GroupEmojiItem> items = group.getItems();
         holder.tvCount.setText("已配置 " + items.size() + "/20 个表情");
 
-        // 动态排布小黄脸图标流
-        holder.llPreview.removeAllViews();
+        // 优化排布：复用已有子 View，消除反复 removeAllViews/addView 导致的剧烈排版重排 (Layout Churn)
         int previewLimit = Math.min(items.size(), 20);
         int iconSize = dp2px(ctx, 32);
         int margin = dp2px(ctx, 5);
 
+        int currentChildCount = holder.llPreview.getChildCount();
         for (int i = 0; i < previewLimit; i++) {
             GroupEmojiItem item = items.get(i);
             if (item == null) continue;
+
+            View childView = (i < currentChildCount) ? holder.llPreview.getChildAt(i) : null;
+
             if (item.isEmoji()) {
-                TextView tv = new TextView(ctx);
-                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(iconSize, iconSize);
-                lp.rightMargin = margin;
-                tv.setLayoutParams(lp);
-                tv.setGravity(android.view.Gravity.CENTER);
-                tv.setTextSize(20);
+                TextView tv;
+                if (childView instanceof TextView) {
+                    tv = (TextView) childView;
+                } else {
+                    if (childView != null) holder.llPreview.removeViewAt(i);
+                    tv = new TextView(ctx);
+                    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(iconSize, iconSize);
+                    lp.rightMargin = margin;
+                    tv.setLayoutParams(lp);
+                    tv.setGravity(android.view.Gravity.CENTER);
+                    tv.setTextSize(20);
+                    holder.llPreview.addView(tv, i);
+                }
+                tv.setVisibility(View.VISIBLE);
+
                 String ch = DefaultPresets.getEmojiChar(item.getLegacyIntId());
                 if (ch.isEmpty()) {
                     try {
@@ -90,32 +102,39 @@ public class EmojiGroupAdapter extends RecyclerView.Adapter<EmojiGroupAdapter.Vi
                     }
                 }
                 tv.setText(ch);
-                holder.llPreview.addView(tv);
             } else {
-                ImageView iv = new ImageView(ctx);
-                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(iconSize, iconSize);
-                lp.rightMargin = margin;
-                iv.setLayoutParams(lp);
+                ImageView iv;
+                if (childView instanceof ImageView) {
+                    iv = (ImageView) childView;
+                } else {
+                    if (childView != null) holder.llPreview.removeViewAt(i);
+                    iv = new ImageView(ctx);
+                    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(iconSize, iconSize);
+                    lp.rightMargin = margin;
+                    iv.setLayoutParams(lp);
+                    holder.llPreview.addView(iv, i);
+                }
+                iv.setVisibility(View.VISIBLE);
 
-                boolean loaded = false;
-                File privateImg = new File(ctx.getFilesDir(), "live_faces/face_" + item.getEmojiId() + ".png");
-                if (privateImg.exists() && privateImg.canRead()) {
-                    android.graphics.Bitmap bm = android.graphics.BitmapFactory.decodeFile(privateImg.getAbsolutePath());
+                int resId = DefaultPresets.getEmojiDrawableRes(ctx, item.getLegacyIntId());
+                if (resId != 0) {
+                    iv.setImageResource(resId);
+                } else {
+                    File privateImg = new File(ctx.getFilesDir(), "live_faces/face_" + item.getEmojiId() + ".png");
+                    android.graphics.Bitmap bm = com.emoji.reactor.util.BitmapCacheManager.loadBitmap(privateImg.getAbsolutePath(), 64, 64);
                     if (bm != null) {
                         iv.setImageBitmap(bm);
-                        loaded = true;
-                    }
-                }
-                if (!loaded) {
-                    int resId = DefaultPresets.getEmojiDrawableRes(ctx, item.getLegacyIntId());
-                    if (resId != 0) {
-                        iv.setImageResource(resId);
                     } else {
                         iv.setImageResource(android.R.drawable.ic_menu_gallery);
                     }
                 }
-                holder.llPreview.addView(iv);
             }
+        }
+
+        // 隐藏多余的旧复用 View
+        int finalCount = holder.llPreview.getChildCount();
+        for (int i = previewLimit; i < finalCount; i++) {
+            holder.llPreview.getChildAt(i).setVisibility(View.GONE);
         }
 
         // 无论是点击卡片本身、点击编辑按钮还是点击内容区，都进入编辑

@@ -20,8 +20,8 @@ public class QQKernelProbe {
 
     private static final String TAG = "QQEmojiReactor_Kernel";
 
-    private static Object cachedMsgService;
-    private static ClassLoader hostClassLoader;
+    private static volatile Object cachedMsgService;
+    private static volatile ClassLoader hostClassLoader;
 
     public static void initProbe(ClassLoader cl) {
         hostClassLoader = cl;
@@ -292,7 +292,19 @@ public class QQKernelProbe {
             if (type.isInterface() && type.getName().contains("Callback")) {
                 try {
                     return Proxy.newProxyInstance(cl, new Class<?>[]{type}, (proxy, method, args) -> {
-                        AppLogger.i(TAG, "JNI 回调响应 -> " + method.getName() + ": " + Arrays.toString(args));
+                        String methodName = method.getName();
+                        // 妥善处理 Object 基础契约方法，杜绝集合/哈希调用时自动拆箱抛出 NPE
+                        if ("equals".equals(methodName)) {
+                            return proxy == (args != null && args.length > 0 ? args[0] : null);
+                        }
+                        if ("hashCode".equals(methodName)) {
+                            return System.identityHashCode(proxy);
+                        }
+                        if ("toString".equals(methodName)) {
+                            return "KernelCallbackProxy@" + Integer.toHexString(System.identityHashCode(proxy));
+                        }
+
+                        AppLogger.i(TAG, "JNI 回调响应 -> " + methodName + ": " + Arrays.toString(args));
                         if (resultListener != null && args != null && args.length >= 1 && args[0] instanceof Number) {
                             int code = ((Number) args[0]).intValue();
                             String err = args.length >= 2 && args[1] != null ? args[1].toString() : "";
@@ -309,12 +321,19 @@ public class QQKernelProbe {
 
     private static Object[] buildArgs(Class<?>[] paramTypes, Object contact, long msgSeq, String emojiIdStr, long emojiType, boolean isSet, Object callback) {
         Object[] args = new Object[paramTypes.length];
+        int longParamCount = 0;
         for (int i = 0; i < paramTypes.length; i++) {
             Class<?> type = paramTypes[i];
             if (contact != null && type.isAssignableFrom(contact.getClass())) {
                 args[i] = contact;
             } else if (type == long.class || type == Long.class) {
-                args[i] = (i == 1) ? msgSeq : emojiType; // 第2个参数为 msgSeq，第4个为 emojiType (1L/2L)
+                // 防御性按出现顺序映射：第 1 个 long 为 msgSeq，第 2 个 long 为 emojiType
+                if (longParamCount == 0) {
+                    args[i] = msgSeq;
+                } else {
+                    args[i] = emojiType;
+                }
+                longParamCount++;
             } else if (type == String.class) {
                 args[i] = emojiIdStr;
             } else if (type == boolean.class || type == Boolean.class) {

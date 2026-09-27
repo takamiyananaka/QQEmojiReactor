@@ -3,17 +3,28 @@ package com.emoji.reactor.data;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.drawable.Drawable;
+import android.net.Uri;
 import android.os.Build;
 
+import androidx.core.content.ContextCompat;
+
+import com.emoji.reactor.R;
 import com.emoji.reactor.model.DefaultPresets;
 import com.emoji.reactor.model.EmojiGroup;
 import com.emoji.reactor.util.AppLogger;
+import com.emoji.reactor.util.BitmapCacheManager;
+import com.emoji.reactor.util.StoragePaths;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -28,6 +39,7 @@ public class ConfigManager {
     public static final String PREF_NAME = "emoji_reactor_config";
     public static final String KEY_GROUPS = "emoji_groups";
     public static final String KEY_ENABLED = "module_enabled";
+    public static final String KEY_CUSTOM_ICON = "custom_menu_icon_base64";
     public static final String ACTION_CONFIG_CHANGED = "com.emoji.reactor.ACTION_CONFIG_CHANGED";
 
     private static final String JSON_KEY_ID = "id";
@@ -88,9 +100,9 @@ public class ConfigManager {
 
             String jsonStr = array.toString();
 
-            // 1. 标准 SharedPreferences
+            // 1. 标准 SharedPreferences (非阻塞异步 apply)
             SharedPreferences sp = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
-            sp.edit().putString(KEY_GROUPS, jsonStr).commit();
+            sp.edit().putString(KEY_GROUPS, jsonStr).apply();
 
             // 2. 写入 Device Protected Storage (如果系统支持)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -98,7 +110,7 @@ public class ConfigManager {
                     Context deContext = context.createDeviceProtectedStorageContext();
                     if (deContext != null) {
                         deContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-                                .edit().putString(KEY_GROUPS, jsonStr).commit();
+                                .edit().putString(KEY_GROUPS, jsonStr).apply();
                     }
                 } catch (Throwable ignored) {
                 }
@@ -117,27 +129,24 @@ public class ConfigManager {
             } catch (Throwable ignored) {
             }
 
-            // 4. 写入外部公开媒体目录镜像备份（/sdcard/Android/media/com.emoji.reactor/config.json）
+            // 4. 写入外部公开媒体目录镜像备份 (标准 Scoped Storage 路径)
             try {
-                File[] mediaDirs = context.getExternalMediaDirs();
-                if (mediaDirs != null && mediaDirs.length > 0 && mediaDirs[0] != null) {
-                    File mediaDir = mediaDirs[0];
-                    if (!mediaDir.exists()) mediaDir.mkdirs();
-                    File backupFile = new File(mediaDir, "config.json");
-                    try (FileOutputStream fos = new FileOutputStream(backupFile)) {
-                        fos.write(jsonStr.getBytes(StandardCharsets.UTF_8));
-                        fos.flush();
-                    }
+                File backupFile = com.emoji.reactor.util.StoragePaths.getSafeMediaConfigFile();
+                File parent = backupFile.getParentFile();
+                if (parent != null && !parent.exists()) parent.mkdirs();
+                try (FileOutputStream fos = new FileOutputStream(backupFile)) {
+                    fos.write(jsonStr.getBytes(StandardCharsets.UTF_8));
+                    fos.flush();
                 }
             } catch (Throwable t) {
                 AppLogger.e(TAG, "写入外部媒体备份异常", t);
             }
 
-            // 4.1 写入系统级公共共享目录备份（/sdcard/Download/QQEmojiReactor/config.json，QQ与模块无障碍互通）
+            // 4.1 写入系统级公共共享目录备份 (标准 Download 路径)
             try {
-                File sharedDir = new File("/sdcard/Download/QQEmojiReactor");
-                if (!sharedDir.exists()) sharedDir.mkdirs();
-                File sharedFile = new File(sharedDir, "config.json");
+                File sharedFile = com.emoji.reactor.util.StoragePaths.getSharedConfigFile();
+                File parent = sharedFile.getParentFile();
+                if (parent != null && !parent.exists()) parent.mkdirs();
                 try (FileOutputStream fos = new FileOutputStream(sharedFile)) {
                     fos.write(jsonStr.getBytes(StandardCharsets.UTF_8));
                     fos.flush();
@@ -236,5 +245,187 @@ public class ConfigManager {
         }
 
         return list;
+    }
+
+    /**
+     * 确保默认菜单图标已安全导出到共享目录，供 QQ 进程无权限障碍读取
+     */
+    public static void ensureDefaultMenuIconExported(Context context) {
+        if (context == null) return;
+        try {
+            File defaultFile = StoragePaths.getDefaultMenuIconFile();
+            File safeMediaFile = StoragePaths.getSafeMediaDefaultMenuIconFile();
+            if (defaultFile.exists() && defaultFile.length() > 0 && safeMediaFile.exists() && safeMediaFile.length() > 0) {
+                return;
+            }
+
+            Drawable d = ContextCompat.getDrawable(context, R.mipmap.ic_launcher);
+            if (d != null) {
+                Bitmap bm = Bitmap.createBitmap(128, 128, Bitmap.Config.ARGB_8888);
+                Canvas canvas = new Canvas(bm);
+                d.setBounds(0, 0, 128, 128);
+                d.draw(canvas);
+
+                saveBitmapToFile(bm, defaultFile);
+                saveBitmapToFile(bm, safeMediaFile);
+            }
+        } catch (Throwable t) {
+            AppLogger.e(TAG, "导出默认菜单图标异常", t);
+        }
+    }
+
+    /**
+     * 保存用户从相册挑选上传的自定义菜单图标（自动裁剪缩放到 128x128 并生成 Base64 与多重镜像）
+     */
+    public static boolean saveCustomMenuIcon(Context context, Uri imageUri) {
+        if (context == null || imageUri == null) return false;
+        try {
+            InputStream is = context.getContentResolver().openInputStream(imageUri);
+            if (is == null) return false;
+            Bitmap original = BitmapFactory.decodeStream(is);
+            is.close();
+            if (original == null) return false;
+
+            Bitmap scaled = Bitmap.createScaledBitmap(original, 128, 128, true);
+
+            java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+            scaled.compress(Bitmap.CompressFormat.PNG, 100, baos);
+            byte[] bytes = baos.toByteArray();
+            String base64Str = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP);
+
+            // 1. 保存到主 App SharedPreferences，供 ContentProvider 零权限跨进程直接传输
+            SharedPreferences sp = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+            sp.edit().putString(KEY_CUSTOM_ICON, base64Str).apply();
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                try {
+                    Context deContext = context.createDeviceProtectedStorageContext();
+                    if (deContext != null) {
+                        deContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+                                .edit().putString(KEY_CUSTOM_ICON, base64Str).apply();
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+
+            // 2. 写入存储镜像文件兜底
+            File customFile = StoragePaths.getCustomMenuIconFile();
+            File safeMediaFile = StoragePaths.getSafeMediaCustomMenuIconFile();
+
+            saveBitmapToFile(scaled, customFile);
+            saveBitmapToFile(scaled, safeMediaFile);
+
+            BitmapCacheManager.clearCache();
+            notifyConfigChanged(context);
+            return true;
+        } catch (Throwable t) {
+            AppLogger.e(TAG, "保存自定义菜单图标异常", t);
+            return false;
+        }
+    }
+
+    /**
+     * 恢复默认菜单图标（删除自定义图标并刷新）
+     */
+    public static boolean resetCustomMenuIcon(Context context) {
+        if (context == null) return false;
+        try {
+            SharedPreferences sp = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+            sp.edit().remove(KEY_CUSTOM_ICON).apply();
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                try {
+                    Context deContext = context.createDeviceProtectedStorageContext();
+                    if (deContext != null) {
+                        deContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+                                .edit().remove(KEY_CUSTOM_ICON).apply();
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+
+            File customFile = StoragePaths.getCustomMenuIconFile();
+            if (customFile.exists()) customFile.delete();
+
+            File safeMediaFile = StoragePaths.getSafeMediaCustomMenuIconFile();
+            if (safeMediaFile.exists()) safeMediaFile.delete();
+
+            BitmapCacheManager.clearCache();
+            ensureDefaultMenuIconExported(context);
+            notifyConfigChanged(context);
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    public static boolean hasCustomMenuIcon(Context context) {
+        if (context != null) {
+            try {
+                SharedPreferences sp = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+                String b64 = sp.getString(KEY_CUSTOM_ICON, null);
+                if (b64 != null && !b64.isEmpty()) return true;
+            } catch (Throwable ignored) {
+            }
+        }
+        File customFile = StoragePaths.getCustomMenuIconFile();
+        if (customFile.exists() && customFile.length() > 0) return true;
+        File safeMediaFile = StoragePaths.getSafeMediaCustomMenuIconFile();
+        return safeMediaFile.exists() && safeMediaFile.length() > 0;
+    }
+
+    public static Bitmap getCurrentMenuIconBitmap(Context context) {
+        if (context == null) return null;
+        try {
+            SharedPreferences sp = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+            String b64 = sp.getString(KEY_CUSTOM_ICON, null);
+            if (b64 != null && !b64.isEmpty()) {
+                byte[] bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT);
+                if (bytes != null && bytes.length > 0) {
+                    Bitmap bm = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+                    if (bm != null) return bm;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+
+        File customFile = StoragePaths.getCustomMenuIconFile();
+        if (!customFile.exists() || customFile.length() == 0) {
+            customFile = StoragePaths.getSafeMediaCustomMenuIconFile();
+        }
+        if (customFile.exists() && customFile.length() > 0) {
+            return BitmapCacheManager.loadBitmap(customFile.getAbsolutePath(), 128, 128);
+        }
+
+        File defaultFile = StoragePaths.getDefaultMenuIconFile();
+        if (!defaultFile.exists() || defaultFile.length() == 0) {
+            defaultFile = StoragePaths.getSafeMediaDefaultMenuIconFile();
+        }
+        if (defaultFile.exists() && defaultFile.length() > 0) {
+            return BitmapCacheManager.loadBitmap(defaultFile.getAbsolutePath(), 128, 128);
+        }
+
+        Drawable d = ContextCompat.getDrawable(context, R.mipmap.ic_launcher);
+        if (d != null) {
+            Bitmap bm = Bitmap.createBitmap(128, 128, Bitmap.Config.ARGB_8888);
+            Canvas canvas = new Canvas(bm);
+            d.setBounds(0, 0, 128, 128);
+            d.draw(canvas);
+            return bm;
+        }
+        return null;
+    }
+
+    private static void saveBitmapToFile(Bitmap bm, File targetFile) {
+        if (bm == null || targetFile == null) return;
+        try {
+            File parent = targetFile.getParentFile();
+            if (parent != null && !parent.exists()) parent.mkdirs();
+            try (FileOutputStream fos = new FileOutputStream(targetFile)) {
+                bm.compress(Bitmap.CompressFormat.PNG, 100, fos);
+                fos.flush();
+            }
+        } catch (Throwable ignored) {
+        }
     }
 }

@@ -95,34 +95,21 @@ public class SelectedEmojiAdapter extends RecyclerView.Adapter<SelectedEmojiAdap
             holder.tvEmojiChar.setVisibility(View.GONE);
             holder.ivEmoji.setVisibility(View.VISIBLE);
 
-            boolean loaded = false;
-            // 1. 尝试从模块私有克隆目录加载动态位图
-            File privateImg = new File(ctx.getFilesDir(), "live_faces/face_" + item.getEmojiId() + ".png");
-            if (privateImg.exists() && privateImg.canRead()) {
-                Bitmap bm = BitmapFactory.decodeFile(privateImg.getAbsolutePath());
+            // 1. 优先使用官方内置超清素材，绝不被任何外部图片污染或错位覆盖
+            int resId = DefaultPresets.getEmojiDrawableRes(ctx, item.getLegacyIntId());
+            if (resId != 0) {
+                holder.ivEmoji.setImageResource(resId);
+            } else {
+                // 2. 尝试从模块私有克隆目录加载动态位图
+                File privateImg = new File(ctx.getFilesDir(), "live_faces/face_" + item.getEmojiId() + ".png");
+                Bitmap bm = com.emoji.reactor.util.BitmapCacheManager.loadBitmap(privateImg.getAbsolutePath(), 96, 96);
+                if (bm == null) {
+                    File safeImg = new File(com.emoji.reactor.util.StoragePaths.getSafeMediaCacheDir(), "face_" + item.getEmojiId() + ".png");
+                    bm = com.emoji.reactor.util.BitmapCacheManager.loadBitmap(safeImg.getAbsolutePath(), 96, 96);
+                }
+
                 if (bm != null) {
                     holder.ivEmoji.setImageBitmap(bm);
-                    loaded = true;
-                }
-            }
-
-            // 2. 尝试从 QQ 外部媒体目录中转加载
-            if (!loaded) {
-                File mediaImg = new File("/sdcard/Android/media/com.tencent.mobileqq/live_emojis/face_" + item.getEmojiId() + ".png");
-                if (mediaImg.exists() && mediaImg.canRead()) {
-                    Bitmap bm = BitmapFactory.decodeFile(mediaImg.getAbsolutePath());
-                    if (bm != null) {
-                        holder.ivEmoji.setImageBitmap(bm);
-                        loaded = true;
-                    }
-                }
-            }
-
-            // 3. 兜底内置官方高清 Drawable
-            if (!loaded) {
-                int resId = DefaultPresets.getEmojiDrawableRes(ctx, item.getLegacyIntId());
-                if (resId != 0) {
-                    holder.ivEmoji.setImageResource(resId);
                 } else {
                     holder.ivEmoji.setImageResource(android.R.drawable.ic_menu_gallery);
                 }

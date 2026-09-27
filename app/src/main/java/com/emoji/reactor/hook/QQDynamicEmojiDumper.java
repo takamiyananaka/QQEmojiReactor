@@ -10,6 +10,7 @@ import android.os.HandlerThread;
 import android.view.View;
 
 import com.emoji.reactor.data.ConfigContentProvider;
+import com.emoji.reactor.model.DefaultPresets;
 import com.emoji.reactor.util.AppLogger;
 
 import org.json.JSONArray;
@@ -24,7 +25,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -35,27 +35,34 @@ import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 
 /**
- * QQ 运行时动态表情全量与实时捕获总引擎 (QQDynamicEmojiDumper)
- * 双轨驱动：
- * 轨道 1：启动主动全量扫描 QQSysAndEmojiResMgr 与 QQSysFaceUtil，提取 QQ 核心表情与官方超清 Drawable
- * 轨道 2：实时消息气泡与 AniStickerLottieView 嗅探，一旦群聊渲染新表情立即捕获并导出
- * 输出目录：/sdcard/Android/media/com.tencent.mobileqq/live_emojis/ (QQ 自身拥有合法写入权限，零权限拦截)
+ * QQ 运行时动态表情自适应捕获引擎 (QQDynamicEmojiDumper)
+ * 1. 彻底移除了开机主动反射调用（杜绝 Native 字体引擎 VasFont 崩溃闪退，全版本稳定兼容）
+ * 2. 挂载贴表情实时数据流嗅探探针（emojiLikesList），只要群聊有人贴出新表情秒级捕获
+ * 3. 强制加入 .nomedia 锁，并隔离在私有沙箱中，彻底杜绝手机相册刷屏
  */
 public class QQDynamicEmojiDumper {
 
     private static final String TAG = "QQEmojiReactor_Dumper";
-    public static final String LIVE_EMOJIS_DIR = "/sdcard/Download/QQEmojiReactor/live_emojis";
-    public static final String LIVE_INDEX_FILE = LIVE_EMOJIS_DIR + "/live_emojis_index.json";
-    public static final String QQ_LEGACY_DUMP_PATH = "/sdcard/Android/media/com.tencent.mobileqq/qq_live_faces.json";
-    public static final String QQ_LEGACY_MEDIA_DIR = "/sdcard/Android/media/com.tencent.mobileqq/live_emojis";
+    public static final String LIVE_EMOJIS_DIR = com.emoji.reactor.util.StoragePaths.getSafeMediaCacheDir().getAbsolutePath();
+    public static final String LIVE_INDEX_FILE = new File(com.emoji.reactor.util.StoragePaths.getSafeMediaCacheDir(), "live_emojis_index.json").getAbsolutePath();
+    public static final String LEGACY_DOWNLOAD_DIR = com.emoji.reactor.util.StoragePaths.getLegacyDownloadLiveDir().getAbsolutePath();
+    public static final String LEGACY_DOWNLOAD_INDEX = new File(com.emoji.reactor.util.StoragePaths.getLegacyDownloadLiveDir(), "live_emojis_index.json").getAbsolutePath();
+    public static final String QQ_LEGACY_DUMP_PATH = com.emoji.reactor.util.StoragePaths.getLegacyQqDumpFile().getAbsolutePath();
+    public static final String QQ_LEGACY_MEDIA_DIR = com.emoji.reactor.util.StoragePaths.getLegacyQqMediaDir().getAbsolutePath();
 
     private static HandlerThread dumpThread;
     private static Handler dumpHandler;
     private static final Set<String> discoveredKeys = Collections.synchronizedSet(new HashSet<>());
     private static final Map<String, JSONObject> activeIndexMap = new ConcurrentHashMap<>();
+    private static final Set<Integer> builtInFaceIdSet = new HashSet<>();
 
-    private static ClassLoader hostClassLoader;
-    private static volatile boolean isScanning = false;
+    static {
+        for (int id : DefaultPresets.ALL_OFFICIAL_FACE_IDS) {
+            builtInFaceIdSet.add(id);
+        }
+    }
+
+    private static volatile ClassLoader hostClassLoader;
 
     public static synchronized void init(ClassLoader cl) {
         if (cl == null) return;
@@ -67,48 +74,42 @@ public class QQDynamicEmojiDumper {
             dumpHandler = new Handler(dumpThread.getLooper());
         }
 
-        // 初始化加载磁盘已有索引
+        // 1. 确保所有相关目录上锁 .nomedia，从底层彻底阻止 Android 相册扫描
+        ensureNomediaLocks();
+
+        // 2. 初始化加载磁盘已有动态索引
         loadExistingIndex();
 
-        // 启动轨道 1：延迟 3 秒执行全量表情池扫描（留足 QQ 启动初始化时间）
-        dumpHandler.postDelayed(() -> doFullScanFromHost(cl, 1), 3000);
-
-        // 启动轨道 2：挂载消息气泡与动画表情实时嗅探探针
+        // 3. 挂载被动安全监听探针（零主动反射轰炸，绝不引起 QQ 闪退）
         attachRealtimeSniffers(cl);
     }
 
     /**
-     * 轨道 1：主动全量扫描
+     * 在模块表情文件夹内强制创建 .nomedia 文件，彻底阻断安卓媒体扫描器刷屏
      */
-    private static void doFullScanFromHost(ClassLoader cl, int attempt) {
-        if (isScanning) return;
-        isScanning = true;
-        try {
-            AppLogger.i(TAG, "开始执行全量表情池主动扫描 (轮次: " + attempt + ")...");
-            Context hostContext = getHostContext(cl);
-
-            // 1. 扫描 QQSysFaceUtil 核心库
-            scanSysFaceUtil(cl, hostContext);
-
-            // 2. 扫描 QQSysAndEmojiResMgr 核心池
-            scanSysAndEmojiResMgr(cl, hostContext);
-
-            // 持久化当前所有发现的表情
-            flushIndexToFile(hostContext);
-
-            // 若首次获取数量较少，在 8 秒后进行二次增量补充扫描（以防云端热更新包延迟就绪）
-            if (attempt == 1 && activeIndexMap.size() < 200 && dumpHandler != null) {
-                dumpHandler.postDelayed(() -> doFullScanFromHost(cl, 2), 8000);
+    public static void ensureNomediaLocks() {
+        String[] dirs = {
+                LIVE_EMOJIS_DIR,
+                LEGACY_DOWNLOAD_DIR,
+                QQ_LEGACY_MEDIA_DIR,
+                com.emoji.reactor.util.StoragePaths.getSharedDownloadDir().getAbsolutePath()
+        };
+        for (String d : dirs) {
+            try {
+                File dirFile = new File(d);
+                if (dirFile.exists() || dirFile.mkdirs()) {
+                    File nomedia = new File(dirFile, ".nomedia");
+                    if (!nomedia.exists()) {
+                        nomedia.createNewFile();
+                    }
+                }
+            } catch (Throwable ignored) {
             }
-        } catch (Throwable t) {
-            AppLogger.e(TAG, "doFullScanFromHost 执行异常", t);
-        } finally {
-            isScanning = false;
         }
     }
 
     /**
-     * 轨道 2：实时消息气泡与动画表情嗅探器
+     * 实时被动消息气泡与贴表情数据流嗅探器
      */
     private static void attachRealtimeSniffers(ClassLoader cl) {
         // 嗅探 A：Hook AniStickerLottieView 与动画表情渲染组件
@@ -117,7 +118,6 @@ public class QQDynamicEmojiDumper {
                     "com.tencent.qqnt.aio.anisticker.view.AniStickerLottieView", cl);
             if (lottieViewClass != null) {
                 for (Method m : lottieViewClass.getDeclaredMethods()) {
-                    // 拦截设置数据、加载动画、渲染等方法
                     Class<?>[] pts = m.getParameterTypes();
                     if (pts.length >= 1) {
                         try {
@@ -131,13 +131,13 @@ public class QQDynamicEmojiDumper {
                         }
                     }
                 }
-                AppLogger.i(TAG, "已成功挂载 AniStickerLottieView 动画表情实时嗅探探针！");
+                AppLogger.i(TAG, "已挂载 AniStickerLottieView 实时嗅探探针");
             }
         } catch (Throwable t) {
-            AppLogger.e(TAG, "挂载 AniStickerLottieView 探针异常", t);
+            AppLogger.d(TAG, "挂载 AniStickerLottieView 跳过: " + t.getMessage());
         }
 
-        // 嗅探 B：Hook AIO 消息项绑定过程，直接从 MsgRecord 的 FaceElement 提取
+        // 嗅探 B：Hook AIO 消息项绑定过程，提取实时展示的 MsgRecord
         try {
             Class<?> baseHolderClass = XposedHelpers.findClassIfExists(
                     "com.tencent.mobileqq.aio.msglist.holder.component.BaseContentComponent", cl);
@@ -157,7 +157,7 @@ public class QQDynamicEmojiDumper {
                 }
             }
         } catch (Throwable t) {
-            AppLogger.e(TAG, "挂载 BaseContentComponent 绑定探针异常", t);
+            AppLogger.d(TAG, "挂载 BaseContentComponent 探针跳过: " + t.getMessage());
         }
     }
 
@@ -166,7 +166,6 @@ public class QQDynamicEmojiDumper {
         for (Object arg : param.args) {
             if (arg == null) continue;
             try {
-                // 探测 arg 中的 stickerId / faceId / id / name
                 String stickerId = findStringOrNumberField(arg, "stickerId", "faceId", "id", "aniStickerId");
                 String name = findStringOrNumberField(arg, "name", "text", "description", "qdes");
                 if (stickerId != null && !stickerId.isEmpty()) {
@@ -201,26 +200,58 @@ public class QQDynamicEmojiDumper {
         }
     }
 
+    /**
+     * 核心嗅探器：全量解析 MsgRecord 中的贴表情 (emojiLikesList) 与 气泡元素 (elements)
+     */
     public static void sniffMsgRecordElements(Object msgRecord) {
         if (msgRecord == null) return;
         try {
-            List<?> elements = (List<?>) XposedHelpers.getObjectField(msgRecord, "elements");
-            if (elements == null || elements.isEmpty()) return;
-
-            for (Object elem : elements) {
-                if (elem == null) continue;
+            // 1. 嗅探贴表情 (MsgEmojiLikes) - 最关键的数据源！
+            List<?> emojiLikes = null;
+            try {
+                emojiLikes = (List<?>) XposedHelpers.getObjectField(msgRecord, "emojiLikesList");
+            } catch (Throwable ignored) {
                 try {
-                    Object faceElem = XposedHelpers.getObjectField(elem, "faceElement");
-                    if (faceElem != null) {
-                        int faceIndex = XposedHelpers.getIntField(faceElem, "faceIndex");
-                        int faceType = XposedHelpers.getIntField(faceElem, "faceType");
-                        String faceText = (String) XposedHelpers.getObjectField(faceElem, "faceText");
-                        if (faceText != null) faceText = faceText.replace("/", "");
-
-                        long type = (faceType == 2 || faceIndex >= 1000) ? 2L : 1L;
-                        onEmojiDiscovered(String.valueOf(faceIndex), type, faceText, null, null, null);
+                    emojiLikes = (List<?>) XposedHelpers.callMethod(msgRecord, "getEmojiLikesList");
+                } catch (Throwable ignored2) {
+                }
+            }
+            if (emojiLikes != null && !emojiLikes.isEmpty()) {
+                for (Object likeItem : emojiLikes) {
+                    if (likeItem == null) continue;
+                    try {
+                        String emojiId = (String) XposedHelpers.getObjectField(likeItem, "emojiId");
+                        long emojiType = XposedHelpers.getLongField(likeItem, "emojiType");
+                        if (emojiId != null && !emojiId.trim().isEmpty()) {
+                            onEmojiDiscovered(emojiId.trim(), emojiType, null, null, null, null);
+                        }
+                    } catch (Throwable ignored) {
                     }
-                } catch (Throwable ignored) {
+                }
+            }
+
+            // 2. 嗅探文本气泡内的 faceElement (如直接输入的 [微笑] 等)
+            List<?> elements = null;
+            try {
+                elements = (List<?>) XposedHelpers.getObjectField(msgRecord, "elements");
+            } catch (Throwable ignored) {
+            }
+            if (elements != null && !elements.isEmpty()) {
+                for (Object elem : elements) {
+                    if (elem == null) continue;
+                    try {
+                        Object faceElem = XposedHelpers.getObjectField(elem, "faceElement");
+                        if (faceElem != null) {
+                            int faceIndex = XposedHelpers.getIntField(faceElem, "faceIndex");
+                            int faceType = XposedHelpers.getIntField(faceElem, "faceType");
+                            String faceText = (String) XposedHelpers.getObjectField(faceElem, "faceText");
+                            if (faceText != null) faceText = faceText.replace("/", "");
+
+                            long type = (faceType == 2 || faceIndex >= 1000) ? 2L : 1L;
+                            onEmojiDiscovered(String.valueOf(faceIndex), type, faceText, null, null, null);
+                        }
+                    } catch (Throwable ignored) {
+                    }
                 }
             }
         } catch (Throwable ignored) {
@@ -228,7 +259,7 @@ public class QQDynamicEmojiDumper {
     }
 
     /**
-     * 统一入口：发现并记录一个新表情
+     * 发现并自适应记录一个新表情
      */
     public static void onEmojiDiscovered(String emojiId, long emojiType, String name, String sourcePath, Drawable optionalDrawable, Context context) {
         if (emojiId == null || emojiId.trim().isEmpty()) return;
@@ -239,11 +270,24 @@ public class QQDynamicEmojiDumper {
             return;
         }
 
+        // 如果是已内置的 416 款官方小黄脸，完全不需要额外生成图片或污染存储，直接标记已存在
+        if (emojiType == 1L) {
+            try {
+                int idNum = Integer.parseInt(cleanId);
+                if (builtInFaceIdSet.contains(idNum)) {
+                    discoveredKeys.add(key);
+                    return;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+
         if (dumpHandler != null) {
             dumpHandler.post(() -> {
                 try {
                     File liveDir = new File(LIVE_EMOJIS_DIR);
                     if (!liveDir.exists()) liveDir.mkdirs();
+                    ensureNomediaLocks();
 
                     String finalPath = null;
                     File targetImgFile = new File(liveDir, "face_" + cleanId + ".png");
@@ -262,11 +306,12 @@ public class QQDynamicEmojiDumper {
                         finalPath = targetImgFile.getAbsolutePath();
                     }
 
-                    // 2. 如果缺少图片，尝试从 QQ 的 QQSysFaceUtil 实时生成一次 Drawable
+                    // 2. 如果缺少图片且是小黄脸，安全通过 localId 转换生成
                     if (finalPath == null && emojiType == 1L && hostClassLoader != null) {
                         try {
                             int fid = Integer.parseInt(cleanId);
-                            Drawable d = loadSysFaceDrawable(hostClassLoader, context, fid);
+                            int localId = convertServerToLocal(hostClassLoader, fid);
+                            Drawable d = loadSysFaceDrawableByLocalId(hostClassLoader, context, localId);
                             if (d != null) {
                                 Bitmap bm = drawableToBitmap(d);
                                 if (bm != null) {
@@ -278,14 +323,20 @@ public class QQDynamicEmojiDumper {
                         }
                     }
 
-                    // 3. 如果缺少名称，尝试从 QQSysFaceUtil 实时提取中文描述
+                    // 3. 提取名称
                     String finalName = name != null ? name.trim() : "";
                     if (finalName.isEmpty() && emojiType == 1L && hostClassLoader != null) {
                         try {
                             int fid = Integer.parseInt(cleanId);
-                            finalName = loadSysFaceDescription(hostClassLoader, fid);
+                            int localId = convertServerToLocal(hostClassLoader, fid);
+                            finalName = loadSysFaceDescriptionByLocalId(hostClassLoader, localId);
                         } catch (Throwable ignored) {
                         }
+                    }
+
+                    // 严禁无图幽灵小黄脸：必须具备有效图片文件，绝不上报空壳！
+                    if (emojiType == 1L && finalPath == null) {
+                        return;
                     }
 
                     JSONObject itemObj = new JSONObject();
@@ -302,7 +353,7 @@ public class QQDynamicEmojiDumper {
 
                     AppLogger.i(TAG, "【动态捕获新表情】ID: " + cleanId + ", Type: " + emojiType + ", 名字: " + finalName + ", 图片: " + (finalPath != null));
 
-                    // 写入磁盘
+                    // 写出索引文件并通知
                     flushIndexToFile(context != null ? context : getHostContext(hostClassLoader));
 
                 } catch (Throwable t) {
@@ -312,110 +363,37 @@ public class QQDynamicEmojiDumper {
         }
     }
 
-    private static void scanSysFaceUtil(ClassLoader cl, Context context) {
+    private static int convertServerToLocal(ClassLoader cl, int serverId) {
         String[] utilClassNames = {
-                "com.tencent.qqnt.emotion.utils.QQSysFaceUtil",
-                "com.tencent.mobileqq.emoticon.QQSysFaceUtil"
+                "com.tencent.mobileqq.emoticon.QQSysFaceUtil",
+                "com.tencent.qqnt.emotion.utils.QQSysFaceUtil"
         };
-
         for (String clsName : utilClassNames) {
             try {
-                Class<?> utilCls = XposedHelpers.findClassIfExists(clsName, cl);
-                if (utilCls == null) continue;
-
-                // 遍历获取全量 ID 列表的方法
-                for (Method m : utilCls.getDeclaredMethods()) {
-                    if (List.class.isAssignableFrom(m.getReturnType()) && m.getParameterTypes().length == 0) {
-                        m.setAccessible(true);
-                        Object res = m.invoke(null);
-                        if (res instanceof List) {
-                            List<?> idList = (List<?>) res;
-                            AppLogger.i(TAG, "从 " + clsName + "#" + m.getName() + " 捕获到基础 ID 总数: " + idList.size());
-                            for (Object idObj : idList) {
-                                if (idObj instanceof Number) {
-                                    int id = ((Number) idObj).intValue();
-                                    String name = loadSysFaceDescription(cl, id);
-                                    Drawable d = loadSysFaceDrawable(cl, context, id);
-                                    onEmojiDiscovered(String.valueOf(id), 1L, name, null, d, context);
-                                }
-                            }
-                        }
-                    }
+                Class<?> cls = XposedHelpers.findClassIfExists(clsName, cl);
+                if (cls != null) {
+                    Method m = cls.getMethod("convertToLocal", int.class);
+                    return (int) m.invoke(null, serverId);
                 }
-            } catch (Throwable t) {
-                AppLogger.d(TAG, "扫描 " + clsName + " 异常: " + t.getMessage());
+            } catch (Throwable ignored) {
             }
         }
+        return serverId;
     }
 
-    private static void scanSysAndEmojiResMgr(ClassLoader cl, Context context) {
-        try {
-            Class<?> resMgrCls = XposedHelpers.findClassIfExists("com.tencent.mobileqq.emoticon.QQSysAndEmojiResMgr", cl);
-            if (resMgrCls == null) return;
-
-            Object mgrInstance = XposedHelpers.callStaticMethod(resMgrCls, "getInstance");
-            if (mgrInstance == null) return;
-
-            Object sysFaceResImpl = XposedHelpers.callMethod(mgrInstance, "getResImpl", 1);
-            if (sysFaceResImpl == null) return;
-
-            Class<?> c = sysFaceResImpl.getClass();
-            while (c != null && c != Object.class) {
-                for (Field f : c.getDeclaredFields()) {
-                    if (Map.class.isAssignableFrom(f.getType())) {
-                        f.setAccessible(true);
-                        Object mapVal = f.get(sysFaceResImpl);
-                        if (mapVal instanceof Map) {
-                            Map<?, ?> map = (Map<?, ?>) mapVal;
-                            for (Map.Entry<?, ?> entry : map.entrySet()) {
-                                Object configItem = entry.getValue();
-                                if (configItem == null) continue;
-                                try {
-                                    String qsidStr = findStringOrNumberField(configItem, "QSid", "id");
-                                    String qdes = findStringOrNumberField(configItem, "QDes", "name");
-                                    if (qdes != null) qdes = qdes.replace("/", "");
-
-                                    if (qsidStr != null && !qsidStr.trim().isEmpty()) {
-                                        int qsid = Integer.parseInt(qsidStr.trim());
-                                        String localPath = null;
-                                        try {
-                                            localPath = (String) XposedHelpers.callStaticMethod(resMgrCls, "getFullResPath", 2, String.format("/s%d.png", qsid));
-                                        } catch (Throwable ignored) {
-                                        }
-
-                                        Drawable d = loadSysFaceDrawable(cl, context, qsid);
-                                        onEmojiDiscovered(String.valueOf(qsid), 1L, qdes, localPath, d, context);
-                                    }
-                                } catch (Throwable ignored) {
-                                }
-                            }
-                        }
-                    }
-                }
-                c = c.getSuperclass();
-            }
-        } catch (Throwable t) {
-            AppLogger.d(TAG, "scanSysAndEmojiResMgr 扫描跳过: " + t.getMessage());
-        }
-    }
-
-    private static String loadSysFaceDescription(ClassLoader cl, int id) {
+    private static String loadSysFaceDescriptionByLocalId(ClassLoader cl, int localId) {
         String[] utilClassNames = {
-                "com.tencent.qqnt.emotion.utils.QQSysFaceUtil",
-                "com.tencent.mobileqq.emoticon.QQSysFaceUtil"
+                "com.tencent.mobileqq.emoticon.QQSysFaceUtil",
+                "com.tencent.qqnt.emotion.utils.QQSysFaceUtil"
         };
         for (String clsName : utilClassNames) {
             try {
                 Class<?> utilCls = XposedHelpers.findClassIfExists(clsName, cl);
                 if (utilCls == null) continue;
-                for (Method m : utilCls.getDeclaredMethods()) {
-                    if (m.getReturnType().equals(String.class) && m.getParameterTypes().length == 1 && m.getParameterTypes()[0] == int.class) {
-                        m.setAccessible(true);
-                        String desc = (String) m.invoke(null, id);
-                        if (desc != null && !desc.trim().isEmpty()) {
-                            return desc.replace("/", "");
-                        }
-                    }
+                Method m = utilCls.getMethod("getFaceDescription", int.class);
+                String desc = (String) m.invoke(null, localId);
+                if (desc != null && !desc.trim().isEmpty()) {
+                    return desc.replace("/", "");
                 }
             } catch (Throwable ignored) {
             }
@@ -423,28 +401,18 @@ public class QQDynamicEmojiDumper {
         return "";
     }
 
-    private static Drawable loadSysFaceDrawable(ClassLoader cl, Context ctx, int id) {
+    private static Drawable loadSysFaceDrawableByLocalId(ClassLoader cl, Context ctx, int localId) {
         String[] utilClassNames = {
-                "com.tencent.qqnt.emotion.utils.QQSysFaceUtil",
-                "com.tencent.mobileqq.emoticon.QQSysFaceUtil"
+                "com.tencent.mobileqq.emoticon.QQSysFaceUtil",
+                "com.tencent.qqnt.emotion.utils.QQSysFaceUtil"
         };
         for (String clsName : utilClassNames) {
             try {
                 Class<?> utilCls = XposedHelpers.findClassIfExists(clsName, cl);
                 if (utilCls == null) continue;
-                for (Method m : utilCls.getDeclaredMethods()) {
-                    if (Drawable.class.isAssignableFrom(m.getReturnType())) {
-                        Class<?>[] pts = m.getParameterTypes();
-                        m.setAccessible(true);
-                        if (pts.length == 1 && pts[0] == int.class) {
-                            Object d = m.invoke(null, id);
-                            if (d instanceof Drawable) return (Drawable) d;
-                        } else if (pts.length == 2 && pts[1] == int.class && ctx != null) {
-                            Object d = m.invoke(null, ctx, id);
-                            if (d instanceof Drawable) return (Drawable) d;
-                        }
-                    }
-                }
+                Method m = utilCls.getMethod("getFaceDrawable", int.class);
+                Object d = m.invoke(null, localId);
+                if (d instanceof Drawable) return (Drawable) d;
             } catch (Throwable ignored) {
             }
         }
@@ -455,6 +423,7 @@ public class QQDynamicEmojiDumper {
         try {
             File liveDir = new File(LIVE_EMOJIS_DIR);
             if (!liveDir.exists()) liveDir.mkdirs();
+            ensureNomediaLocks();
 
             JSONArray array = new JSONArray();
             for (JSONObject obj : activeIndexMap.values()) {
@@ -463,7 +432,7 @@ public class QQDynamicEmojiDumper {
 
             String jsonStr = array.toString();
 
-            // 1. 写出到最新 live_emojis_index.json
+            // 1. 写出到最新沙箱 live_emojis_index.json
             File indexFile = new File(LIVE_INDEX_FILE);
             try (FileOutputStream fos = new FileOutputStream(indexFile)) {
                 fos.write(jsonStr.getBytes(StandardCharsets.UTF_8));
@@ -496,6 +465,9 @@ public class QQDynamicEmojiDumper {
     private static void loadExistingIndex() {
         try {
             File indexFile = new File(LIVE_INDEX_FILE);
+            if (!indexFile.exists() || !indexFile.canRead() || indexFile.length() == 0) {
+                indexFile = new File(LEGACY_DOWNLOAD_INDEX);
+            }
             if (!indexFile.exists() || !indexFile.canRead() || indexFile.length() == 0) {
                 indexFile = new File(QQ_LEGACY_DUMP_PATH);
             }

@@ -15,32 +15,48 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
  * 双源表情并集融合与私有克隆持久化仓库 (HybridEmojiRepository)
- * 静态全量底库 ∪ QQ 动态实时表情清单 = 100% 极致齐全表情池
- * 具备自动克隆机制：即便用户清理 QQ 缓存，模块内已保存的动态表情永不丢失
+ * 1. 严格按 QQ 官方内部 ID 升序平铺排布（0 ~ 507）
+ * 2. 官方内置 416 款超清正版表情绝对优先，杜绝任何外部错位文件污染
+ * 3. 动态发现的全新表情无缝按 ID 插入入库，永不过时
+ * 4. 强制上锁 .nomedia，私有沙箱隔离，绝不污染系统相册
  */
 public class HybridEmojiRepository {
 
     private static final String TAG = "QQEmojiReactor_Repo";
-    public static final String SHARED_LIVE_INDEX = "/sdcard/Download/QQEmojiReactor/live_emojis/live_emojis_index.json";
-    public static final String QQ_LIVE_INDEX = "/sdcard/Android/media/com.tencent.mobileqq/live_emojis/live_emojis_index.json";
-    public static final String QQ_LEGACY_INDEX = "/sdcard/Android/media/com.tencent.mobileqq/qq_live_faces.json";
+    public static final String SAFE_LIVE_INDEX = new File(com.emoji.reactor.util.StoragePaths.getSafeMediaCacheDir(), "live_emojis_index.json").getAbsolutePath();
+    public static final String SHARED_LIVE_INDEX = new File(com.emoji.reactor.util.StoragePaths.getLegacyDownloadLiveDir(), "live_emojis_index.json").getAbsolutePath();
+    public static final String QQ_LIVE_INDEX = new File(com.emoji.reactor.util.StoragePaths.getLegacyQqMediaDir(), "live_emojis_index.json").getAbsolutePath();
+    public static final String QQ_LEGACY_INDEX = com.emoji.reactor.util.StoragePaths.getLegacyQqDumpFile().getAbsolutePath();
     public static final String DYNAMIC_PREF_NAME = "dynamic_faces_cache";
     public static final String KEY_DYNAMIC_FACES = "faces_json";
 
     private static volatile List<EmojiItem> mergedSysfacesCache;
+    private static volatile int dynamicCapturedCount = 0;
 
     public static synchronized void invalidateCache() {
         mergedSysfacesCache = null;
     }
 
+    public static int getOfficialFaceCount() {
+        return DefaultPresets.ALL_OFFICIAL_FACE_IDS.length;
+    }
+
+    public static int getDynamicallyCapturedCount(Context context) {
+        if (mergedSysfacesCache == null) {
+            getMergedSysfaces(context);
+        }
+        return dynamicCapturedCount;
+    }
+
     /**
-     * 获取全量小黄脸表情（静态底库 + QQ 动态热更表情融合，新表情优先置顶）
+     * 获取全量小黄脸表情（严格按 QQ 官方内部 ID 排序，官方超清优先，动态自适应补全）
      */
     public static List<EmojiItem> getMergedSysfaces(Context context) {
         if (mergedSysfacesCache != null && !mergedSysfacesCache.isEmpty()) {
@@ -52,14 +68,17 @@ public class HybridEmojiRepository {
         Map<String, EmojiItem> dynamicMap = new LinkedHashMap<>();
         Map<String, EmojiItem> staticMap = new LinkedHashMap<>();
 
-        // 1. 基础源：加载本地 294 个全量小黄脸底库（带官方名称与正版超清图）
+        // 1. 基础源：加载本地 416 个全量小黄脸官方正版底库（带官方名称与正版超清图）
         List<EmojiItem> staticBase = DefaultPresets.getAllSupportedSysfaces(context);
         for (EmojiItem item : staticBase) {
             staticMap.put(item.getRawEmojiId(), item);
         }
 
-        // 2. 读取 QQ 动态导出的数据源（优先最新磁盘文件，兜底 SharedPreferences）
-        String jsonStr = readStringFromFile(new File(SHARED_LIVE_INDEX));
+        // 2. 读取 QQ 动态导出的数据源（优先安全私有沙箱索引，兜底 Download 与 SharedPreferences）
+        String jsonStr = readStringFromFile(new File(SAFE_LIVE_INDEX));
+        if (jsonStr == null || jsonStr.trim().isEmpty()) {
+            jsonStr = readStringFromFile(new File(SHARED_LIVE_INDEX));
+        }
         if (jsonStr == null || jsonStr.trim().isEmpty()) {
             jsonStr = readStringFromFile(new File(QQ_LIVE_INDEX));
         }
@@ -78,7 +97,8 @@ public class HybridEmojiRepository {
             jsonStr = readStringFromFile(new File(QQ_LEGACY_INDEX));
         }
 
-        // 3. 解析动态表情列表并克隆图片至模块私有目录
+        // 3. 解析动态表情列表并克隆图片至模块私有沙箱目录
+        int newDynamicCount = 0;
         if (jsonStr != null && !jsonStr.trim().isEmpty()) {
             try {
                 JSONArray array = new JSONArray(jsonStr);
@@ -91,6 +111,11 @@ public class HybridEmojiRepository {
                     if (emojiId == null || emojiId.trim().isEmpty()) continue;
                     emojiId = emojiId.trim();
 
+                    // 如果该 ID 已经在 416 官方静态库中，绝对保留官方原版，不被外部文件替换！
+                    if (staticMap.containsKey(emojiId)) {
+                        continue;
+                    }
+
                     long emojiType = obj.optLong("emojiType", 1L);
                     String name = obj.optString("name", "");
                     String path = obj.optString("path", null);
@@ -101,7 +126,13 @@ public class HybridEmojiRepository {
                         permanentPath = path;
                     }
                     if (permanentPath == null) {
-                        File sharedImg = new File("/sdcard/Download/QQEmojiReactor/live_emojis/face_" + emojiId + ".png");
+                        File safeImg = new File(com.emoji.reactor.util.StoragePaths.getSafeMediaCacheDir(), "face_" + emojiId + ".png");
+                        if (safeImg.exists() && safeImg.canRead()) {
+                            permanentPath = safeImg.getAbsolutePath();
+                        }
+                    }
+                    if (permanentPath == null) {
+                        File sharedImg = new File(com.emoji.reactor.util.StoragePaths.getLegacyDownloadLiveDir(), "face_" + emojiId + ".png");
                         if (sharedImg.exists() && sharedImg.canRead()) {
                             permanentPath = sharedImg.getAbsolutePath();
                         }
@@ -123,59 +154,74 @@ public class HybridEmojiRepository {
                         permanentPath = destFile.getAbsolutePath();
                     }
 
-                    EmojiItem staticItem = staticMap.get(emojiId);
-                    String finalName = (!name.isEmpty()) ? name : (staticItem != null ? staticItem.getName() : "");
-
-                    int builtInRes = 0;
-                    try {
-                        builtInRes = DefaultPresets.getEmojiDrawableRes(context, Integer.parseInt(emojiId));
-                    } catch (Throwable ignored) {
+                    // 严禁无图幽灵表情上架：必须具备有效且大小 > 0 的真实图片文件！
+                    boolean hasValidImage = (permanentPath != null && new File(permanentPath).exists() && new File(permanentPath).length() > 0);
+                    if (!hasValidImage) {
+                        continue;
                     }
 
-                    boolean hasImage = (permanentPath != null && new File(permanentPath).exists());
-
-                    // 无论是有图片还是动态已注册表情，全部准予上屏呈现
-                    if (hasImage || builtInRes != 0 || !finalName.isEmpty()) {
-                        EmojiItem dynamicItem = new EmojiItem(emojiId, emojiType, finalName, null, permanentPath, true);
-                        dynamicMap.put(emojiId, dynamicItem);
-                    }
+                    String finalName = (!name.isEmpty()) ? name : ("新表情 " + emojiId);
+                    EmojiItem dynamicItem = new EmojiItem(emojiId, emojiType, finalName, null, permanentPath, true);
+                    dynamicMap.put(emojiId, dynamicItem);
+                    newDynamicCount++;
                 }
-                AppLogger.i(TAG, "已成功从动态源载入并融合 " + dynamicMap.size() + " 款表情！");
+                AppLogger.i(TAG, "已成功从动态源载入并融合 " + dynamicMap.size() + " 款新动态表情！");
             } catch (Throwable t) {
                 AppLogger.e(TAG, "解析动态表情 JSON 异常", t);
             }
         }
 
-        // 4. 融合与排序策略：
-        // 动态发现的最新表情（新出的 ID）优先前置排布，其余静态底库表情平铺在后，确保 100% 完整收纳无遗漏
-        List<EmojiItem> result = new ArrayList<>();
+        dynamicCapturedCount = newDynamicCount;
 
-        // ① 先添加非静态底库的全新动态表情（最新款前置）
-        for (Map.Entry<String, EmojiItem> entry : dynamicMap.entrySet()) {
-            if (!staticMap.containsKey(entry.getKey())) {
-                result.add(entry.getValue());
+        // 4. 合并并严格按 QQ 官方内部 ID 升序平铺排序
+        List<EmojiItem> result = new ArrayList<>(staticMap.values());
+        for (EmojiItem item : dynamicMap.values()) {
+            if (!staticMap.containsKey(item.getRawEmojiId())) {
+                result.add(item);
             }
         }
 
-        // ② 再添加底库表情（如果动态源有更新的超清图片路径则智能替换）
-        for (Map.Entry<String, EmojiItem> entry : staticMap.entrySet()) {
-            String id = entry.getKey();
-            if (dynamicMap.containsKey(id) && dynamicMap.get(id).getImagePath() != null) {
-                result.add(dynamicMap.get(id));
+        Collections.sort(result, (a, b) -> {
+            String idA = a != null ? a.getRawEmojiId() : "";
+            String idB = b != null ? b.getRawEmojiId() : "";
+            boolean isNumA = isNumeric(idA);
+            boolean isNumB = isNumeric(idB);
+            if (isNumA && isNumB) {
+                try {
+                    int numA = Integer.parseInt(idA);
+                    int numB = Integer.parseInt(idB);
+                    return Integer.compare(numA, numB);
+                } catch (NumberFormatException ignored) {
+                    return idA.compareTo(idB);
+                }
+            } else if (isNumA) {
+                return -1; // 纯数字小黄脸优先按数值升序排布
+            } else if (isNumB) {
+                return 1;
             } else {
-                result.add(entry.getValue());
+                return idA.compareTo(idB); // 非纯数字 ID 严格按字典序稳定排布
             }
-        }
+        });
 
         mergedSysfacesCache = new ArrayList<>(result);
         return mergedSysfacesCache;
     }
 
     /**
-     * 获取全量 Emoji 表情（1354 款全量）
+     * 获取全量 Emoji 表情（1368 款全量，含青蛙 🐸）
      */
     public static List<EmojiItem> getAllEmojis(Context context) {
         return DefaultPresets.getAllSupportedEmojis(context);
+    }
+
+    private static boolean isNumeric(String str) {
+        if (str == null || str.isEmpty()) return false;
+        for (int i = 0; i < str.length(); i++) {
+            if (!Character.isDigit(str.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static String readStringFromFile(File file) {

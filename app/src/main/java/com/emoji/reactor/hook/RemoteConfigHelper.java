@@ -5,6 +5,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Bundle;
 
+import com.emoji.reactor.data.ConfigContentProvider;
 import com.emoji.reactor.data.ConfigManager;
 import com.emoji.reactor.model.DefaultPresets;
 import com.emoji.reactor.model.EmojiGroup;
@@ -31,8 +32,8 @@ public class RemoteConfigHelper {
     private static final String TAG = "QQEmojiReactor_Config";
     public static final String PACKAGE_NAME = "com.emoji.reactor";
     private static final String QQ_LOCAL_PREF_NAME = "emoji_reactor_qq_cache";
-    public static final String SHARED_CONFIG_PATH = "/sdcard/Download/QQEmojiReactor/config.json";
-    public static final String LEGACY_MEDIA_CONFIG_PATH = "/sdcard/Android/media/com.emoji.reactor/config.json";
+    public static final String SHARED_CONFIG_PATH = com.emoji.reactor.util.StoragePaths.getSharedConfigFile().getAbsolutePath();
+    public static final String LEGACY_MEDIA_CONFIG_PATH = com.emoji.reactor.util.StoragePaths.getSafeMediaConfigFile().getAbsolutePath();
 
     public static final String PROVIDER_AUTHORITY = "com.emoji.reactor.provider";
     public static final String METHOD_GET_CONFIG = "get_config";
@@ -45,7 +46,27 @@ public class RemoteConfigHelper {
 
     private static volatile List<EmojiGroup> memoryCachedGroups;
     private static volatile Boolean memoryEnabled;
-    private static XSharedPreferences xsp;
+    private static volatile String memoryCustomIconBase64;
+    private static volatile XSharedPreferences xsp;
+
+    public static String getCustomMenuIconBase64(Context context) {
+        if (memoryCustomIconBase64 != null) {
+            return memoryCustomIconBase64;
+        }
+        if (context != null) {
+            try {
+                ContentResolver cr = context.getContentResolver();
+                Bundle bundle = cr.call(getProviderUri(), METHOD_GET_CONFIG, null, null);
+                if (bundle != null && bundle.containsKey(ConfigContentProvider.KEY_CUSTOM_ICON_BASE64)) {
+                    String b64 = bundle.getString(ConfigContentProvider.KEY_CUSTOM_ICON_BASE64, "");
+                    memoryCustomIconBase64 = b64;
+                    return b64;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return "";
+    }
 
     /**
      * 判断模块是否处于开启状态
@@ -71,7 +92,6 @@ public class RemoteConfigHelper {
         try {
             if (xsp == null) {
                 xsp = new XSharedPreferences(PACKAGE_NAME, ConfigManager.PREF_NAME);
-                xsp.makeWorldReadable();
             } else {
                 xsp.reload();
             }
@@ -93,6 +113,9 @@ public class RemoteConfigHelper {
                 ContentResolver cr = context.getContentResolver();
                 Bundle bundle = cr.call(getProviderUri(), METHOD_GET_CONFIG, null, null);
                 if (bundle != null) {
+                    if (bundle.containsKey(ConfigContentProvider.KEY_CUSTOM_ICON_BASE64)) {
+                        memoryCustomIconBase64 = bundle.getString(ConfigContentProvider.KEY_CUSTOM_ICON_BASE64, "");
+                    }
                     String str = bundle.getString(KEY_GROUPS_JSON, null);
                     if (str != null && !str.trim().isEmpty() && !str.equals("[]")) {
                         jsonStr = str;
@@ -103,15 +126,15 @@ public class RemoteConfigHelper {
             }
         }
 
-        // 通道 2：从系统级公共共享目录读取（/sdcard/Download/QQEmojiReactor/config.json，最可靠互通通道）
+        // 通道 2：从系统级公共共享目录读取 (标准 Download/QQEmojiReactor 路径)
         if (jsonStr == null || jsonStr.trim().isEmpty()) {
-            jsonStr = readStringFromFile(new File(SHARED_CONFIG_PATH));
+            jsonStr = readStringFromFile(com.emoji.reactor.util.StoragePaths.getSharedConfigFile());
             if (jsonStr != null && context != null) cacheToQqStorage(context, jsonStr);
         }
 
-        // 通道 3：从外部公开媒体目录镜像文件读取（/sdcard/Android/media/com.emoji.reactor/config.json）
+        // 通道 3：从外部公开媒体目录镜像文件读取 (标准 Scoped Storage 路径)
         if (jsonStr == null || jsonStr.trim().isEmpty()) {
-            jsonStr = readStringFromFile(new File(LEGACY_MEDIA_CONFIG_PATH));
+            jsonStr = readStringFromFile(com.emoji.reactor.util.StoragePaths.getSafeMediaConfigFile());
             if (jsonStr != null && context != null) cacheToQqStorage(context, jsonStr);
         }
 
@@ -120,7 +143,6 @@ public class RemoteConfigHelper {
             try {
                 if (xsp == null) {
                     xsp = new XSharedPreferences(PACKAGE_NAME, ConfigManager.PREF_NAME);
-                    xsp.makeWorldReadable();
                 } else {
                     xsp.reload();
                 }

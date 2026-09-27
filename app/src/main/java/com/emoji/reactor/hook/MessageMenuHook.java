@@ -30,9 +30,9 @@ public class MessageMenuHook {
     private static final String TAG = "QQEmojiReactor_Menu";
     public static final int CHAT_TYPE_GROUP = 2; // QQ NT 官方群聊类型常量
 
-    private static Class<?> baseMenuItemClass;
-    private static Method getMsgMethod;
-    private static String getListMethodName;
+    private static volatile Class<?> baseMenuItemClass;
+    private static volatile Method getMsgMethod;
+    private static volatile String getListMethodName;
     private static final Set<Class<?>> hookedComponentClasses = Collections.synchronizedSet(new HashSet<>());
 
     public static void init(ClassLoader cl) {
@@ -57,11 +57,105 @@ public class MessageMenuHook {
                         if (pts[0] == int.class && pts[2] == boolean.class && pts[3] == float[].class) {
                             baseMenuItemClass = pts[1];
                             AppLogger.i(TAG, "已精准锁定 baseMenuItemClass: " + baseMenuItemClass.getName());
+                            hookMenuLayoutItemRenderer(m);
+                            hookExpandableLayoutPopulate(clazz);
                             return;
                         }
                     }
                 }
             } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    private static void hookMenuLayoutItemRenderer(Method renderMethod) {
+        if (renderMethod == null) return;
+        try {
+            XposedBridge.hookMethod(renderMethod, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param == null || param.args == null || param.args.length < 2) return;
+                    Object itemObj = param.args[1];
+                    if (QQCustomMenuItemHelper.isOurMenuItem(itemObj)) {
+                        Object resultView = param.getResult();
+                        if (resultView instanceof View) {
+                            AppLogger.i(TAG, "菜单单项构建 l() 拦截命中: " + itemObj);
+                            fixImageViewInView((View) resultView);
+                        }
+                    }
+                }
+            });
+            AppLogger.i(TAG, "已成功挂载菜单单项渲染探针！");
+        } catch (Throwable t) {
+            AppLogger.e(TAG, "挂载菜单单项渲染探针异常", t);
+        }
+    }
+
+    private static void hookExpandableLayoutPopulate(Class<?> layoutClass) {
+        if (layoutClass == null) return;
+        try {
+            // 防线 2：Hook QQCustomMenuExpandableLayout.s() - 全局排版结束后的全景校正
+            for (Method m : layoutClass.getDeclaredMethods()) {
+                if (m.getReturnType() == void.class && m.getParameterTypes().length == 0 && "s".equals(m.getName())) {
+                    XposedBridge.hookMethod(m, new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                            if (param.thisObject instanceof android.view.ViewGroup) {
+                                AppLogger.i(TAG, "菜单全景布局 s() 渲染结束，执行全景图标防御校正...");
+                                fixMenuIconsInViewGroup((android.view.ViewGroup) param.thisObject);
+                            }
+                        }
+                    });
+                    AppLogger.i(TAG, "已成功挂载菜单全景布局 s() 探针！");
+                }
+            }
+
+            // 防线 3：Hook QQCustomMenuExpandableLayout.addView(View, ...) - 动态添加容器时的即时拦截
+            XposedBridge.hookAllMethods(layoutClass, "addView", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.args != null && param.args.length > 0 && param.args[0] instanceof View) {
+                        View v = (View) param.args[0];
+                        if (QQCustomMenuItemHelper.isOurMenuItem(v.getTag())) {
+                            AppLogger.i(TAG, "菜单容器 addView() 拦截命中，即时更新图标: " + v);
+                            fixImageViewInView(v);
+                        }
+                    }
+                }
+            });
+        } catch (Throwable t) {
+            AppLogger.e(TAG, "hookExpandableLayoutPopulate 异常", t);
+        }
+    }
+
+    private static void fixMenuIconsInViewGroup(android.view.ViewGroup vg) {
+        if (vg == null) return;
+        for (int i = 0; i < vg.getChildCount(); i++) {
+            View child = vg.getChildAt(i);
+            if (child != null) {
+                if (QQCustomMenuItemHelper.isOurMenuItem(child.getTag())) {
+                    fixImageViewInView(child);
+                } else if (child instanceof android.view.ViewGroup) {
+                    fixMenuIconsInViewGroup((android.view.ViewGroup) child);
+                }
+            }
+        }
+    }
+
+    private static void fixImageViewInView(View v) {
+        if (v == null) return;
+        if (v instanceof android.widget.ImageView) {
+            QQCustomMenuItemHelper.applyCustomIconToView((android.widget.ImageView) v);
+            return;
+        }
+        if (v instanceof android.view.ViewGroup) {
+            android.view.ViewGroup vg = (android.view.ViewGroup) v;
+            for (int i = 0; i < vg.getChildCount(); i++) {
+                View child = vg.getChildAt(i);
+                if (child instanceof android.widget.ImageView) {
+                    QQCustomMenuItemHelper.applyCustomIconToView((android.widget.ImageView) child);
+                    break;
+                }
             }
         }
     }
@@ -102,13 +196,15 @@ public class MessageMenuHook {
 
                     if (getListMethodName != null) {
                         try {
-                            Method targetMenuMethod = compClass.getMethod(getListMethodName);
-                            XposedBridge.hookMethod(targetMenuMethod, new XC_MethodHook() {
-                                @Override
-                                protected void afterHookedMethod(MethodHookParam p) throws Throwable {
-                                    handleComponentMenuGenerated(p, compClass);
-                                }
-                            });
+                            Method targetMenuMethod = findMethodRecursive(compClass, getListMethodName);
+                            if (targetMenuMethod != null) {
+                                XposedBridge.hookMethod(targetMenuMethod, new XC_MethodHook() {
+                                    @Override
+                                    protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                                        handleComponentMenuGenerated(p, compClass);
+                                    }
+                                });
+                            }
                         } catch (Throwable ignored) {
                         }
                     }
@@ -158,7 +254,7 @@ public class MessageMenuHook {
 
             // 防重检查
             for (Object item : list) {
-                if (item != null && item.toString().contains("一键贴表情")) return;
+                if (item != null && item.toString().contains("贴表情")) return;
             }
 
             if (baseMenuItemClass != null) {
@@ -177,7 +273,7 @@ public class MessageMenuHook {
                         mutableList.add(0, myItem);
                         param.setResult(mutableList);
                     }
-                    AppLogger.i(TAG, "【成功注入】在群聊组件 " + compClass.getSimpleName() + " 注入当前消息的【🚀 一键贴表情】");
+                    AppLogger.i(TAG, "【成功注入】在群聊组件 " + compClass.getSimpleName() + " 注入当前消息的【贴表情】");
                 }
             }
 
@@ -187,17 +283,24 @@ public class MessageMenuHook {
     }
 
     public static void showGroupSelectDialog(Context context, Object msgRecord) {
-        AppLogger.i(TAG, "用户触发长按菜单【🚀 一键贴表情】，准备弹出方案选择...");
+        AppLogger.i(TAG, "用户触发长按菜单【贴表情】，准备弹出方案选择...");
         if (context == null || msgRecord == null) {
             AppLogger.e(TAG, "无法弹出方案选择：context 或 msgRecord 为空", null);
             return;
         }
 
-        List<EmojiGroup> groups = RemoteConfigHelper.getGroups(context);
+        // 解包 Context 并校验 Activity 存活，杜绝 BadTokenException
+        android.app.Activity activity = resolveActivity(context);
+        if (activity == null || activity.isFinishing()) {
+            AppLogger.e(TAG, "当前 Context 并非有效运行中的 Activity，取消弹窗以防 BadTokenException", null);
+            return;
+        }
+
+        List<EmojiGroup> groups = RemoteConfigHelper.getGroups(activity);
         if (groups == null || groups.isEmpty()) return;
 
         if (groups.size() == 1) {
-            ReactionExecutor.executeBatchReaction(context, msgRecord, groups.get(0));
+            ReactionExecutor.executeBatchReaction(activity, msgRecord, groups.get(0));
             return;
         }
 
@@ -208,15 +311,40 @@ public class MessageMenuHook {
             items[i] = g.getName() + " (" + count + "个表情 / " + g.getDelayMs() + "ms)";
         }
 
-        new AlertDialog.Builder(context)
-                .setTitle("🚀 选择一键贴表情方案")
+        new AlertDialog.Builder(activity)
+                .setTitle("🚀 选择贴表情方案")
                 .setItems(items, (dialog, which) -> {
                     if (which >= 0 && which < groups.size()) {
-                        ReactionExecutor.executeBatchReaction(context, msgRecord, groups.get(which));
+                        ReactionExecutor.executeBatchReaction(activity, msgRecord, groups.get(which));
                     }
                 })
                 .setNegativeButton("取消", null)
                 .show();
+    }
+
+    private static android.app.Activity resolveActivity(Context context) {
+        Context cur = context;
+        while (cur instanceof android.content.ContextWrapper) {
+            if (cur instanceof android.app.Activity) {
+                return (android.app.Activity) cur;
+            }
+            cur = ((android.content.ContextWrapper) cur).getBaseContext();
+        }
+        return null;
+    }
+
+    private static Method findMethodRecursive(Class<?> clazz, String methodName) {
+        Class<?> cur = clazz;
+        while (cur != null && cur != Object.class) {
+            try {
+                Method m = cur.getDeclaredMethod(methodName);
+                m.setAccessible(true);
+                return m;
+            } catch (NoSuchMethodException ignored) {
+            }
+            cur = cur.getSuperclass();
+        }
+        return null;
     }
 
     private static int extractChatType(Object msgRecord) {

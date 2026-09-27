@@ -26,6 +26,7 @@ public class ConfigContentProvider extends ContentProvider {
     public static final String KEY_DYNAMIC_FACES = "faces_json";
     public static final String KEY_GROUPS_JSON = "groups_json";
     public static final String KEY_IS_ENABLED = "is_enabled";
+    public static final String KEY_CUSTOM_ICON_BASE64 = "custom_icon_base64";
 
     @Override
     public boolean onCreate() {
@@ -36,12 +37,23 @@ public class ConfigContentProvider extends ContentProvider {
     @Override
     public Bundle call(@NonNull String method, @Nullable String arg, @Nullable Bundle extras) {
         Context ctx = getContext();
+        String caller = getCallingPackage();
+        // 安全防御：严格校验调用方包名，仅允许 QQ 宿主与模块自身进程访问，杜绝第三方恶意应用探测
+        if (caller != null) {
+            String selfPkg = (ctx != null) ? ctx.getPackageName() : "com.emoji.reactor";
+            if (!caller.equals(selfPkg) && !caller.equals("com.tencent.mobileqq") && !caller.equals("com.tencent.tim")) {
+                com.emoji.reactor.util.AppLogger.e("ConfigContentProvider", "拦截未经授权的第三方应用跨进程访问: " + caller, null);
+                throw new SecurityException("Unauthorized access from package: " + caller);
+            }
+        }
+
         if (METHOD_GET_CONFIG.equals(method)) {
             Bundle bundle = new Bundle();
             if (ctx != null) {
                 SharedPreferences sp = ctx.getSharedPreferences(ConfigManager.PREF_NAME, Context.MODE_PRIVATE);
                 bundle.putString(KEY_GROUPS_JSON, sp.getString(ConfigManager.KEY_GROUPS, ""));
                 bundle.putBoolean(KEY_IS_ENABLED, sp.getBoolean(ConfigManager.KEY_ENABLED, true));
+                bundle.putString(KEY_CUSTOM_ICON_BASE64, sp.getString(ConfigManager.KEY_CUSTOM_ICON, ""));
             }
             return bundle;
         } else if (METHOD_SAVE_DYNAMIC_FACES.equals(method) && arg != null) {

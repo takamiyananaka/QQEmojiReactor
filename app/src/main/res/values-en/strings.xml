@@ -4,4 +4,24 @@
     <string name="action_about">About</string>
     <string name="about_title">About nanaka (菜々華)</string>
     <string name="about_license">License: GNU General Public License v3.0 (GPL-3.0-or-later)</string>
+    <string name="module_enabled_toast">Emoji reaction module enabled</string>
+    <string name="module_disabled_toast">Emoji reaction module disabled</string>
+    <string name="confirm_delete_title">Confirm Delete</string>
+    <string name="confirm_delete_msg">Delete preset \"%1$s\"?</string>
+    <string name="deleted_toast">Deleted</string>
+    <string name="emoji_limit_reached">Reached %1$d emojis limit</string>
+    <string name="reaction_busy">Previous batch is still running, please wait...</string>
+    <string name="reaction_start">Reacting (%1$d emojis)...</string>
+    <string name="reaction_muted">Notice: You are muted or do not have permission</string>
+    <string name="reaction_all_set">Notice: You have already reacted with these emojis</string>
+    <string name="reaction_success">Done! Successfully reacted with %1$d emojis</string>
+    <string name="reaction_mixed">Done! Added %1$d (%2$d already reacted)</string>
+    <string name="menu_icon_title">Menu Button Icon</string>
+    <string name="menu_icon_default">Default is App icon, or pick custom image</string>
+    <string name="menu_icon_customized">Custom photo applied</string>
+    <string name="menu_icon_preview_desc">Menu icon preview</string>
+    <string name="action_change_icon">Change Icon</string>
+    <string name="action_reset_icon">Reset Default</string>
+    <string name="menu_icon_updated_toast">Menu icon updated!</string>
+    <string name="menu_icon_reset_toast">Menu icon reset to default</string>
 </resources>

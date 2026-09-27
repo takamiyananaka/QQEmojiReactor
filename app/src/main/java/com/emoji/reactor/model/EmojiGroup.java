@@ -2,6 +2,7 @@ package com.emoji.reactor.model;
 
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 
@@ -81,7 +82,7 @@ public class EmojiGroup implements Serializable {
         if (items == null) {
             items = new ArrayList<>();
         }
-        return items;
+        return Collections.unmodifiableList(items);
     }
 
     public void setItems(List<GroupEmojiItem> items) {

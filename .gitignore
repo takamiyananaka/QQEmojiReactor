@@ -43,8 +43,14 @@ Thumbs.db
 ehthumbs.db
 Desktop.ini
 
-# User internal guides & local specifications (严格本地隔离，绝不上云)
+# User internal guides, reviews & local specifications (严格本地隔离，绝不上云)
 AGENTS.md
+CODE_REVIEW.md
+*.review.md
+
+# Test harnesses & offline benchmarks (极简模式：测试脚本不入库)
+app/src/test/
+build/test-classes/
 
 # Temporary test artifacts & dumps
 *.xml.dump

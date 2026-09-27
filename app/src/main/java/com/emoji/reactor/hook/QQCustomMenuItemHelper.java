@@ -1,8 +1,12 @@
 package com.emoji.reactor.hook;
 
 import android.content.Context;
+import android.graphics.Bitmap;
+import android.widget.ImageView;
 
 import com.emoji.reactor.util.AppLogger;
+import com.emoji.reactor.util.BitmapCacheManager;
+import com.emoji.reactor.util.StoragePaths;
 
 import net.bytebuddy.ByteBuddy;
 import net.bytebuddy.android.AndroidClassLoadingStrategy;
@@ -24,11 +28,78 @@ import java.lang.reflect.Modifier;
 public class QQCustomMenuItemHelper {
 
     private static final String TAG = "QQEmojiReactor_Item";
-    public static final String ITEM_TEXT = "🚀 一键贴表情";
+    public static final String ITEM_TEXT = "贴表情";
     public static final int ITEM_ID = 0x7E110001;
 
     private static volatile Class<?> dynamicMenuItemClass;
-    private static Field actionField;
+    private static volatile Field actionField;
+
+    public static boolean isOurMenuItem(Object itemObj) {
+        if (itemObj == null) return false;
+        String cls = itemObj.getClass().getName();
+        if (cls.contains("EmojiReactor") || cls.contains("Generated")) return true;
+        try {
+            Method m = itemObj.getClass().getMethod("f");
+            Object title = m.invoke(itemObj);
+            if (title != null && title.toString().contains("贴表情")) return true;
+        } catch (Throwable ignored) {
+        }
+        return itemObj.toString().contains("贴表情");
+    }
+
+    /**
+     * 将用户自定义或 App 默认粉萌图标注入到菜单项的 ImageView 中
+     */
+    public static void applyCustomIconToView(ImageView iv) {
+        if (iv == null) return;
+        try {
+            Context ctx = iv.getContext();
+            Bitmap customBm = null;
+
+            // 1. 最高优先级：从 ContentProvider 跨进程传递的 Base64 字符串解析用户自定义图标
+            String customBase64 = RemoteConfigHelper.getCustomMenuIconBase64(ctx);
+            if (customBase64 != null && !customBase64.trim().isEmpty()) {
+                byte[] bytes = android.util.Base64.decode(customBase64, android.util.Base64.DEFAULT);
+                if (bytes != null && bytes.length > 0) {
+                    customBm = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+                }
+            }
+
+            // 2. 次高优先级：尝试从文件读取用户自定义图片 (兜底)
+            if (customBm == null) {
+                File customFile = StoragePaths.getCustomMenuIconFile();
+                if (!customFile.exists() || customFile.length() == 0) {
+                    customFile = StoragePaths.getSafeMediaCustomMenuIconFile();
+                }
+                if (customFile.exists() && customFile.length() > 0) {
+                    customBm = BitmapCacheManager.loadBitmap(customFile.getAbsolutePath(), 128, 128);
+                }
+            }
+
+            // 3. 用户如果设置了自定义图片，立即设置
+            if (customBm != null && !customBm.isRecycled()) {
+                iv.setImageBitmap(customBm);
+                iv.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                AppLogger.i(TAG, "已成功应用用户相册自定义菜单图标！");
+                return;
+            }
+
+            // 4. 默认形态：直接通过 Android 官方 PackageManager 读取本模块的超清 App 图标 (杜绝与“复制”图标撞车)
+            try {
+                android.graphics.drawable.Drawable appIcon = ctx.getPackageManager().getApplicationIcon("com.emoji.reactor");
+                if (appIcon != null) {
+                    iv.setImageDrawable(appIcon);
+                    iv.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                    AppLogger.i(TAG, "已成功应用官方 App 默认粉萌菜单图标！");
+                    return;
+                }
+            } catch (Throwable t) {
+                AppLogger.e(TAG, "获取 App 默认图标失败", t);
+            }
+        } catch (Throwable t) {
+            AppLogger.e(TAG, "设置自定义菜单图标异常", t);
+        }
+    }
 
     /**
      * 创建一个合法的 QQ NT 菜单项实例
@@ -100,12 +171,21 @@ public class QQCustomMenuItemHelper {
                     // 定义系统级字段 public Runnable action，所有 ClassLoader 100% 互相可见
                     .defineField("action", Runnable.class, Modifier.PUBLIC);
 
-            // 1. 拦截标题与 ID
+            // 1. 拦截标题、Tag 与图标 Resource ID
             for (Method m : baseMenuItemCls.getDeclaredMethods()) {
                 if (m.getReturnType() == String.class && m.getParameterTypes().length == 0) {
-                    builder = builder.method(ElementMatchers.is(m)).intercept(FixedValue.value(ITEM_TEXT));
+                    if ("e".equals(m.getName())) {
+                        builder = builder.method(ElementMatchers.is(m)).intercept(FixedValue.value("EmojiReactorMenuItem"));
+                    } else {
+                        builder = builder.method(ElementMatchers.is(m)).intercept(FixedValue.value(ITEM_TEXT));
+                    }
                 } else if (m.getReturnType() == int.class && m.getParameterTypes().length == 0) {
-                    builder = builder.method(ElementMatchers.is(m)).intercept(FixedValue.value(ITEM_ID));
+                    if ("b".equals(m.getName())) {
+                        // b() 返回图标 Drawable Resource ID，必须是 QQ 宿主内真实合法的图标 ID (0x7f081edd)，杜绝 NotFoundException
+                        builder = builder.method(ElementMatchers.is(m)).intercept(FixedValue.value(0x7f081edd));
+                    } else {
+                        builder = builder.method(ElementMatchers.is(m)).intercept(FixedValue.value(ITEM_ID));
+                    }
                 }
             }
 

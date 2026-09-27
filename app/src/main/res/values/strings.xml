@@ -4,4 +4,24 @@
     <string name="action_about">关于</string>
     <string name="about_title">关于 菜々華 (nanaka)</string>
     <string name="about_license">开源许可证：GNU General Public License v3.0 (GPL-3.0-or-later)</string>
+    <string name="module_enabled_toast">已启用贴表情模块</string>
+    <string name="module_disabled_toast">已停用贴表情模块</string>
+    <string name="confirm_delete_title">确认删除</string>
+    <string name="confirm_delete_msg">确定要删除方案「%1$s」吗？</string>
+    <string name="deleted_toast">已删除</string>
+    <string name="emoji_limit_reached">已达到 %1$d 个表情上限，无法添加</string>
+    <string name="reaction_busy">正在执行上一轮贴表情，请稍候...</string>
+    <string name="reaction_start">开始贴表情 (共 %1$d 个)...</string>
+    <string name="reaction_muted">提示：您在当前群已被禁言或无权限贴表情</string>
+    <string name="reaction_all_set">提示：这几个表情此前您已全部贴过</string>
+    <string name="reaction_success">完成！成功贴上 %1$d 个表情</string>
+    <string name="reaction_mixed">完成！新贴 %1$d 个 (%2$d 个此前已贴)</string>
+    <string name="menu_icon_title">长按菜单图标</string>
+    <string name="menu_icon_default">默认与 App 图标一致，可自选相册图片</string>
+    <string name="menu_icon_customized">已生效相册自定义图标</string>
+    <string name="menu_icon_preview_desc">菜单图标预览</string>
+    <string name="action_change_icon">更换图标</string>
+    <string name="action_reset_icon">恢复默认</string>
+    <string name="menu_icon_updated_toast">长按菜单图标已更新，QQ长按消息即刻生效！</string>
+    <string name="menu_icon_reset_toast">已恢复默认 App 菜单图标</string>
 </resources>

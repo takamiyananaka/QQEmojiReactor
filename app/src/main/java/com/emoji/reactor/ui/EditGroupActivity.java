@@ -104,7 +104,7 @@ public class EditGroupActivity extends AppCompatActivity {
         // 弹出表情挑选框
         btnAdd.setOnClickListener(v -> {
             if (selectedAdapter.getItemCount() >= MAX_EMOJI_LIMIT) {
-                Toast.makeText(EditGroupActivity.this, "已达到 " + MAX_EMOJI_LIMIT + " 个表情上限，无法添加", Toast.LENGTH_SHORT).show();
+                Toast.makeText(EditGroupActivity.this, getString(R.string.emoji_limit_reached, MAX_EMOJI_LIMIT), Toast.LENGTH_SHORT).show();
                 return;
             }
             showEmojiPickerDialog();
@@ -147,21 +147,21 @@ public class EditGroupActivity extends AppCompatActivity {
             List<EmojiItem> sysfaces = HybridEmojiRepository.getMergedSysfaces(EditGroupActivity.this);
             pickerAdapter.switchList(sysfaces);
             btnTabSysface.setText("QQ小黄脸 (" + sysfaces.size() + ")");
-            btnTabSysface.setBackgroundColor(getResources().getColor(R.color.primary));
-            btnTabSysface.setTextColor(getResources().getColor(android.R.color.white));
-            btnTabEmoji.setBackgroundColor(getResources().getColor(android.R.color.transparent));
-            btnTabEmoji.setTextColor(getResources().getColor(R.color.primary));
+            btnTabSysface.setBackgroundColor(androidx.core.content.ContextCompat.getColor(this, R.color.primary));
+            btnTabSysface.setTextColor(androidx.core.content.ContextCompat.getColor(this, android.R.color.white));
+            btnTabEmoji.setBackgroundColor(androidx.core.content.ContextCompat.getColor(this, android.R.color.transparent));
+            btnTabEmoji.setTextColor(androidx.core.content.ContextCompat.getColor(this, R.color.primary));
         });
 
-        // 分类 2：切换到原生 Emoji (1354 全量)
+        // 分类 2：切换到原生 Emoji (全量)
         btnTabEmoji.setOnClickListener(v -> {
             List<EmojiItem> emojis = HybridEmojiRepository.getAllEmojis(EditGroupActivity.this);
             pickerAdapter.switchList(emojis);
             btnTabEmoji.setText("全量 Emoji (" + emojis.size() + ")");
-            btnTabEmoji.setBackgroundColor(getResources().getColor(R.color.primary));
-            btnTabEmoji.setTextColor(getResources().getColor(android.R.color.white));
-            btnTabSysface.setBackgroundColor(getResources().getColor(android.R.color.transparent));
-            btnTabSysface.setTextColor(getResources().getColor(R.color.primary));
+            btnTabEmoji.setBackgroundColor(androidx.core.content.ContextCompat.getColor(this, R.color.primary));
+            btnTabEmoji.setTextColor(androidx.core.content.ContextCompat.getColor(this, android.R.color.white));
+            btnTabSysface.setBackgroundColor(androidx.core.content.ContextCompat.getColor(this, android.R.color.transparent));
+            btnTabSysface.setTextColor(androidx.core.content.ContextCompat.getColor(this, R.color.primary));
         });
 
         AlertDialog dialog = new AlertDialog.Builder(this)

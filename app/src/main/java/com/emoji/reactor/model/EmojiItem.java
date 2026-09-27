@@ -109,14 +109,15 @@ public class EmojiItem implements Serializable {
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        EmojiItem emojiItem = (EmojiItem) o;
-        return id == emojiItem.id;
+        if (!(o instanceof EmojiItem)) return false;
+        EmojiItem other = (EmojiItem) o;
+        return this.getRawEmojiType() == other.getRawEmojiType()
+                && Objects.equals(this.getRawEmojiId(), other.getRawEmojiId());
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(id);
+        return Objects.hash(getRawEmojiType(), getRawEmojiId());
     }
 
     @Override

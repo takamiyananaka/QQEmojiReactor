@@ -90,26 +90,15 @@ public class EmojiPickerAdapter extends RecyclerView.Adapter<EmojiPickerAdapter.
             holder.tvEmojiChar.setVisibility(View.GONE);
             holder.ivEmoji.setVisibility(View.VISIBLE);
 
-            boolean loaded = false;
-            String path = item.getImagePath();
-            if (path != null) {
-                try {
-                    File imgFile = new File(path);
-                    if (imgFile.exists() && imgFile.canRead()) {
-                        Bitmap bm = BitmapFactory.decodeFile(path);
-                        if (bm != null) {
-                            holder.ivEmoji.setImageBitmap(bm);
-                            loaded = true;
-                        }
-                    }
-                } catch (Throwable ignored) {
-                }
-            }
-
-            if (!loaded) {
-                int resId = DefaultPresets.getEmojiDrawableRes(ctx, item.getId());
-                if (resId != 0) {
-                    holder.ivEmoji.setImageResource(resId);
+            // 1. 优先使用官方内置超清素材，绝不被任何外部图片污染或错位覆盖
+            int resId = DefaultPresets.getEmojiDrawableRes(ctx, item.getId());
+            if (resId != 0) {
+                holder.ivEmoji.setImageResource(resId);
+            } else {
+                // 2. 仅在无内置资源时（如真正的新动态捕获表情），通过 LruCache 内存池安全按需解码
+                Bitmap bm = com.emoji.reactor.util.BitmapCacheManager.loadBitmap(item.getImagePath(), 96, 96);
+                if (bm != null) {
+                    holder.ivEmoji.setImageBitmap(bm);
                 } else {
                     holder.ivEmoji.setImageResource(android.R.drawable.ic_menu_gallery);
                 }

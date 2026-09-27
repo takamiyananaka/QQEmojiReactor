@@ -49,13 +49,12 @@ public class ReactionExecutor {
             return;
         }
 
-        if (isRunning.get()) {
+        if (!isRunning.compareAndSet(false, true)) {
             showToast(context, "正在执行上一轮贴表情，请稍候...");
             return;
         }
 
         workerHandler.post(() -> {
-            isRunning.set(true);
             try {
                 List<com.emoji.reactor.model.GroupEmojiItem> rawItems = group.getItems();
                 // 1. 防取消过滤：仅剔除本人已贴过的表情（通用 ID 去重）
