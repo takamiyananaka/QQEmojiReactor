@@ -42,7 +42,8 @@ public class QQCustomMenuItemHelper {
             Method m = itemObj.getClass().getMethod("f");
             Object title = m.invoke(itemObj);
             if (title != null && title.toString().contains("贴表情")) return true;
-        } catch (Throwable ignored) {
+        } catch (Exception e) {
+            AppLogger.d("QQCustomMenuItemHelper", "isOurMenuItem 反射安全跳过: " + e.getMessage());
         }
         return itemObj.toString().contains("贴表情");
     }

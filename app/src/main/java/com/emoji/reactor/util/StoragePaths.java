@@ -14,7 +14,8 @@ public class StoragePaths {
         try {
             File dir = Environment.getExternalStorageDirectory();
             if (dir != null) return dir;
-        } catch (Throwable ignored) {
+        } catch (Exception e) {
+            AppLogger.d("StoragePaths", "获取外部存储根目录回退: " + e.getMessage());
         }
         return new File("/sdcard");
     }
@@ -25,7 +26,8 @@ public class StoragePaths {
             if (downloadDir != null) {
                 return new File(downloadDir, "QQEmojiReactor");
             }
-        } catch (Throwable ignored) {
+        } catch (Exception e) {
+            AppLogger.d("StoragePaths", "获取Download目录回退: " + e.getMessage());
         }
         return new File(getExternalStorageRoot(), "Download/QQEmojiReactor");
     }
@@ -68,5 +70,71 @@ public class StoragePaths {
 
     public static File getSafeMediaDefaultMenuIconFile() {
         return new File(getExternalStorageRoot(), "Android/media/com.emoji.reactor/default_menu_icon.png");
+    }
+
+    public static File getSafeMediaAvatarsDir() {
+        File dir = new File(getExternalStorageRoot(), "Android/media/com.emoji.reactor/custom_avatars");
+        if (!dir.exists()) dir.mkdirs();
+        try {
+            dir.setReadable(true, false);
+            dir.setExecutable(true, false);
+        } catch (Exception e) {
+            AppLogger.d("StoragePaths", "设置目录权限回退: " + e.getMessage());
+        }
+        return dir;
+    }
+
+    public static File getSharedAvatarsDir() {
+        File dir = new File(getSharedDownloadDir(), "custom_avatars");
+        if (!dir.exists()) dir.mkdirs();
+        try {
+            dir.setReadable(true, false);
+            dir.setExecutable(true, false);
+        } catch (Exception e) {
+            AppLogger.d("StoragePaths", "设置目录权限回退: " + e.getMessage());
+        }
+        return dir;
+    }
+
+    public static File getAvatarFile(String uin) {
+        return new File(getSafeMediaAvatarsDir(), uin + ".png");
+    }
+
+    public static File getQqMediaRootDir() {
+        return new File(getExternalStorageRoot(), "Android/media/com.tencent.mobileqq");
+    }
+
+    public static File getQqMediaEmojiReactorDir() {
+        File dir = new File(getQqMediaRootDir(), "emoji_reactor");
+        if (!dir.exists()) dir.mkdirs();
+        try {
+            dir.setReadable(true, false);
+            dir.setWritable(true, false);
+            dir.setExecutable(true, false);
+        } catch (Exception e) {
+            AppLogger.d("StoragePaths", "设置QQ媒体目录权限回退: " + e.getMessage());
+        }
+        return dir;
+    }
+
+    public static File getQqMediaConfigFile() {
+        return new File(getQqMediaEmojiReactorDir(), "config.json");
+    }
+
+    public static File getQqMediaAvatarsDir() {
+        File dir = new File(getQqMediaEmojiReactorDir(), "custom_avatars");
+        if (!dir.exists()) dir.mkdirs();
+        try {
+            dir.setReadable(true, false);
+            dir.setWritable(true, false);
+            dir.setExecutable(true, false);
+        } catch (Exception e) {
+            AppLogger.d("StoragePaths", "设置QQ媒体目录权限回退: " + e.getMessage());
+        }
+        return dir;
+    }
+
+    public static File getQqAvatarFile(String uin) {
+        return new File(getQqMediaAvatarsDir(), uin + ".png");
     }
 }

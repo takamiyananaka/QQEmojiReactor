@@ -24,4 +24,27 @@
     <string name="action_reset_icon">恢复默认</string>
     <string name="menu_icon_updated_toast">长按菜单图标已更新，QQ长按消息即刻生效！</string>
     <string name="menu_icon_reset_toast">已恢复默认 App 菜单图标</string>
+    <string name="feature_reaction_title">批量贴表情</string>
+    <string name="feature_reaction_desc">长按消息一键快速贴上预设的表情方案序列</string>
+    <string name="feature_flash_pic_title">闪照无痕破解</string>
+    <string name="feature_flash_pic_desc">破除5秒销毁限制，直接以普通图片形式展示，可长按保存</string>
+    <string name="feature_anti_recall_title">消息防撤回</string>
+    <string name="feature_anti_recall_desc">阻止本地消息撤回删除，完好保留聊天内容并标记[已撤回]</string>
+    <string name="feature_custom_avatar_title">单向自定义头像</string>
+    <string name="feature_custom_avatar_desc">本地单向替换指定QQ号的头像，支持不同人不同配置与一键复原</string>
+    <string name="section_features_title">模块核心功能开关</string>
+    <string name="section_presets_title">贴表情预设方案列表</string>
+    <string name="section_custom_avatars_title">单向自定义头像列表</string>
+    <string name="btn_add_custom_avatar">添加头像替换</string>
+    <string name="dialog_input_uin_title">添加自定义头像</string>
+    <string name="dialog_input_uin_hint">请输入目标账号的纯数字 QQ 号</string>
+    <string name="avatar_updated_toast">自定义头像已保存并生效！</string>
+    <string name="avatar_removed_toast">已复原并清除该账号的自定义头像</string>
+    <string name="avatar_btn_modify">修改</string>
+    <string name="avatar_btn_restore">复原</string>
+    <string name="dialog_restore_confirm_title">确认一键复原</string>
+    <string name="dialog_restore_confirm_msg">确定要清除账号 %1$s 的自定义头像并恢复官方原版头像吗？</string>
+    <string name="dialog_restore_positive_btn">立即复原</string>
+    <string name="dialog_input_uin_empty_toast">QQ号不能为空</string>
+    <string name="dialog_choose_image_btn">选择头像照片</string>
 </resources>

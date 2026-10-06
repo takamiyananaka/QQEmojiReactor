@@ -50,8 +50,8 @@ public class EmojiItem implements Serializable {
         int parsedId = 0;
         try {
             parsedId = Integer.parseInt(rawEmojiId);
-        } catch (Throwable ignored) {
-            parsedId = rawEmojiId.hashCode();
+        } catch (NumberFormatException e) {
+            parsedId = rawEmojiId != null ? rawEmojiId.hashCode() : 0;
         }
         this.id = parsedId;
         this.rawEmojiId = rawEmojiId != null ? rawEmojiId : String.valueOf(parsedId);
@@ -96,7 +96,8 @@ public class EmojiItem implements Serializable {
         if (type == TYPE_EMOJI) {
             try {
                 return new String(Character.toChars(id));
-            } catch (Throwable ignored) {
+            } catch (IllegalArgumentException e) {
+                com.emoji.reactor.util.AppLogger.d("EmojiItem", "toChars 非法代码点: " + id);
             }
         }
         return "";

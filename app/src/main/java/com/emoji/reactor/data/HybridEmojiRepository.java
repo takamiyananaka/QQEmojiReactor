@@ -88,7 +88,8 @@ public class HybridEmojiRepository {
                 try {
                     SharedPreferences sp = context.getSharedPreferences(DYNAMIC_PREF_NAME, Context.MODE_PRIVATE);
                     jsonStr = sp.getString(KEY_DYNAMIC_FACES, null);
-                } catch (Throwable ignored) {
+                } catch (Exception e) {
+                    AppLogger.d("HybridEmojiRepository", "读取动态表情SP安全跳过: " + e.getMessage());
                 }
             }
         }
@@ -232,7 +233,8 @@ public class HybridEmojiRepository {
             if (len > 0) {
                 return new String(buf, 0, len, StandardCharsets.UTF_8);
             }
-        } catch (Throwable ignored) {
+        } catch (Exception e) {
+            AppLogger.d("HybridEmojiRepository", "readStringFromFile 安全跳过: " + e.getMessage());
         }
         return null;
     }
@@ -246,7 +248,8 @@ public class HybridEmojiRepository {
                 out.write(buf, 0, len);
             }
             out.flush();
-        } catch (Throwable ignored) {
+        } catch (Exception e) {
+            AppLogger.d("HybridEmojiRepository", "copyFile 安全跳过: " + e.getMessage());
         }
     }
 }

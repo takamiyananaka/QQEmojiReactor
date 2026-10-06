@@ -68,7 +68,8 @@ public class QQKernelProbe {
                         });
                     }
                 }
-            } catch (Throwable ignored) {
+            } catch (Exception e) {
+                AppLogger.d(TAG, "hookMsgServices 安全跳过: " + e.getMessage());
             }
         }
     }
@@ -184,7 +185,8 @@ public class QQKernelProbe {
                                         registerMsgService(sub);
                                         return sub;
                                     }
-                                } catch (Throwable ignored) {
+                                } catch (Exception e) {
+                                    AppLogger.d(TAG, "getMsgService 安全跳过: " + e.getMessage());
                                 }
                                 // 或者是 MsgService包装类，检查 getService()
                                 try {
@@ -194,15 +196,18 @@ public class QQKernelProbe {
                                         registerMsgService(sub);
                                         return sub;
                                     }
-                                } catch (Throwable ignored) {
+                                } catch (Exception e) {
+                                    AppLogger.d(TAG, "getService 安全跳过: " + e.getMessage());
                                 }
                             }
-                        } catch (Throwable ignored) {
+                        } catch (Exception e) {
+                            AppLogger.d(TAG, "invoke KernelServiceUtil 方法安全跳过: " + e.getMessage());
                         }
                     }
                 }
             }
-        } catch (Throwable ignored) {
+        } catch (Exception e) {
+            AppLogger.d(TAG, "KernelServiceUtil 通道 1 扫描安全跳过: " + e.getMessage());
         }
 
         // 通道 2：MobileQQ waitAppRuntime
@@ -226,7 +231,8 @@ public class QQKernelProbe {
                                         registerMsgService(kernel);
                                         return kernel;
                                     }
-                                } catch (Throwable ignored) {
+                                } catch (Exception e) {
+                                    AppLogger.d(TAG, "msgService.getService 安全跳过: " + e.getMessage());
                                 }
                                 registerMsgService(msgService);
                                 return msgService;
@@ -235,7 +241,8 @@ public class QQKernelProbe {
                     }
                 }
             }
-        } catch (Throwable ignored) {
+        } catch (Exception e) {
+            AppLogger.d(TAG, "MobileQQ waitAppRuntime 通道 2 扫描安全跳过: " + e.getMessage());
         }
 
         return null;
@@ -272,7 +279,8 @@ public class QQKernelProbe {
                 XposedHelpers.setObjectField(obj, "peerUid", peerUid);
                 XposedHelpers.setObjectField(obj, "guildId", guildId);
                 return obj;
-            } catch (Throwable ignored) {
+            } catch (Exception e) {
+                AppLogger.d(TAG, "createContact 实例化安全跳过: " + e.getMessage());
             }
         }
         return null;
@@ -312,7 +320,8 @@ public class QQKernelProbe {
                         }
                         return null;
                     });
-                } catch (Throwable ignored) {
+                } catch (Exception e) {
+                    AppLogger.d(TAG, "createCallbackProxy 代理创建安全跳过: " + e.getMessage());
                 }
             }
         }
@@ -349,12 +358,14 @@ public class QQKernelProbe {
         try {
             Object seq = XposedHelpers.getObjectField(msgRecord, "msgSeq");
             if (seq instanceof Number) return ((Number) seq).longValue();
-        } catch (Throwable ignored) {
+        } catch (Exception e) {
+            AppLogger.d(TAG, "extractMsgSeq msgSeq 读取安全跳过: " + e.getMessage());
         }
         try {
             Object id = XposedHelpers.getObjectField(msgRecord, "msgId");
             if (id instanceof Number) return ((Number) id).longValue();
-        } catch (Throwable ignored) {
+        } catch (Exception e) {
+            AppLogger.d(TAG, "extractMsgSeq msgId 读取安全跳过: " + e.getMessage());
         }
         return 0L;
     }
@@ -363,7 +374,8 @@ public class QQKernelProbe {
         try {
             Object v = XposedHelpers.getObjectField(obj, fieldName);
             if (v instanceof Number) return ((Number) v).intValue();
-        } catch (Throwable ignored) {
+        } catch (Exception e) {
+            AppLogger.d(TAG, "extractIntField 安全跳过: " + e.getMessage());
         }
         return def;
     }
@@ -372,7 +384,8 @@ public class QQKernelProbe {
         try {
             Object v = XposedHelpers.getObjectField(obj, fieldName);
             if (v != null) return v.toString();
-        } catch (Throwable ignored) {
+        } catch (Exception e) {
+            AppLogger.d(TAG, "extractStringField 安全跳过: " + e.getMessage());
         }
         return def;
     }

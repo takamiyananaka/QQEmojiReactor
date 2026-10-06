@@ -63,7 +63,8 @@ public class MessageMenuHook {
                         }
                     }
                 }
-            } catch (Throwable ignored) {
+            } catch (Exception e) {
+                AppLogger.d(TAG, "hookMenuClasses 安全跳过: " + e.getMessage());
             }
         }
     }
@@ -205,7 +206,8 @@ public class MessageMenuHook {
                                     }
                                 });
                             }
-                        } catch (Throwable ignored) {
+                        } catch (Exception e) {
+                            AppLogger.d(TAG, "hook targetMenuMethod 安全跳过: " + e.getMessage());
                         }
                     }
                 }
@@ -250,7 +252,10 @@ public class MessageMenuHook {
             final Context targetContext = extractContextFromComponent(param.thisObject);
             if (targetContext == null) return;
 
-            if (!RemoteConfigHelper.isEnabled(targetContext)) return;
+            if (!RemoteConfigHelper.isModuleEnabled(targetContext) ||
+                    !RemoteConfigHelper.isFeatureEnabled(targetContext, com.emoji.reactor.feature.impl.BatchReactionFeature.KEY, true)) {
+                return;
+            }
 
             // 防重检查
             for (Object item : list) {
@@ -351,7 +356,8 @@ public class MessageMenuHook {
         try {
             Object ct = XposedHelpers.getObjectField(msgRecord, "chatType");
             if (ct instanceof Number) return ((Number) ct).intValue();
-        } catch (Throwable ignored) {
+        } catch (Exception e) {
+            AppLogger.d(TAG, "extractChatType 安全跳过: " + e.getMessage());
         }
         return 0;
     }
@@ -360,11 +366,13 @@ public class MessageMenuHook {
         if (aioMsgItem == null) return null;
         try {
             return XposedHelpers.callMethod(aioMsgItem, "getMsgRecord");
-        } catch (Throwable ignored) {
+        } catch (Exception e) {
+            AppLogger.d(TAG, "call getMsgRecord 安全跳过: " + e.getMessage());
         }
         try {
             return XposedHelpers.getObjectField(aioMsgItem, "msgRecord");
-        } catch (Throwable ignored) {
+        } catch (Exception e) {
+            AppLogger.d(TAG, "get field msgRecord 安全跳过: " + e.getMessage());
         }
         if (aioMsgItem.getClass().getName().contains("MsgRecord")) {
             return aioMsgItem;
@@ -385,7 +393,8 @@ public class MessageMenuHook {
                 }
                 c = c.getSuperclass();
             }
-        } catch (Throwable ignored) {
+        } catch (Exception e) {
+            AppLogger.d(TAG, "extractContextFromComponent 安全跳过: " + e.getMessage());
         }
         return null;
     }

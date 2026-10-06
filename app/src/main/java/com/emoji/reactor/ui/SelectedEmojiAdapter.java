@@ -87,7 +87,8 @@ public class SelectedEmojiAdapter extends RecyclerView.Adapter<SelectedEmojiAdap
             if (ch.isEmpty()) {
                 try {
                     ch = new String(Character.toChars(Integer.parseInt(item.getEmojiId())));
-                } catch (Throwable ignored) {
+                } catch (Exception e) {
+                    com.emoji.reactor.util.AppLogger.d("SelectedEmojiAdapter", "toChars 安全跳过: " + e.getMessage());
                 }
             }
             holder.tvEmojiChar.setText(ch);

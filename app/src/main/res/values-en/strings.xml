@@ -24,4 +24,27 @@
     <string name="action_reset_icon">Reset Default</string>
     <string name="menu_icon_updated_toast">Menu icon updated!</string>
     <string name="menu_icon_reset_toast">Menu icon reset to default</string>
+    <string name="feature_reaction_title">Batch Emoji Reaction</string>
+    <string name="feature_reaction_desc">Long press message to react with preset sequence</string>
+    <string name="feature_flash_pic_title">Flash Picture Cracking</string>
+    <string name="feature_flash_pic_desc">Bypass 5s self-destruct, show as normal photo, allow saving</string>
+    <string name="feature_anti_recall_title">Anti Message Recall</string>
+    <string name="feature_anti_recall_desc">Prevent local message deletion, keep content and mark [Recalled]</string>
+    <string name="feature_custom_avatar_title">One-Way Custom Avatar</string>
+    <string name="feature_custom_avatar_desc">Locally replace avatar for specified QQ accounts, supports per-user setup and 1-click restore</string>
+    <string name="section_features_title">Module Features</string>
+    <string name="section_presets_title">Emoji Preset Schemes</string>
+    <string name="section_custom_avatars_title">Custom Avatars List</string>
+    <string name="btn_add_custom_avatar">Add Custom Avatar</string>
+    <string name="dialog_input_uin_title">Add Custom Avatar</string>
+    <string name="dialog_input_uin_hint">Enter target QQ account (UIN)</string>
+    <string name="avatar_updated_toast">Custom avatar saved and active!</string>
+    <string name="avatar_removed_toast">Custom avatar restored to default</string>
+    <string name="avatar_btn_modify">Change</string>
+    <string name="avatar_btn_restore">Restore</string>
+    <string name="dialog_restore_confirm_title">Confirm Restore</string>
+    <string name="dialog_restore_confirm_msg">Are you sure you want to restore official avatar for account %1$s?</string>
+    <string name="dialog_restore_positive_btn">Restore Now</string>
+    <string name="dialog_input_uin_empty_toast">QQ number cannot be empty</string>
+    <string name="dialog_choose_image_btn">Pick Image</string>
 </resources>

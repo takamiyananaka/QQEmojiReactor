@@ -15,6 +15,11 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.emoji.reactor.R;
 import com.emoji.reactor.data.ConfigManager;
+import com.emoji.reactor.feature.impl.AntiRecallFeature;
+import com.emoji.reactor.feature.impl.BatchReactionFeature;
+import com.emoji.reactor.feature.impl.CustomAvatarFeature;
+import com.emoji.reactor.feature.impl.FlashPicFeature;
+import com.emoji.reactor.model.CustomAvatarItem;
 import com.emoji.reactor.model.EmojiGroup;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton;
@@ -34,6 +39,10 @@ public class MainActivity extends AppCompatActivity implements EmojiGroupAdapter
     private EmojiGroupAdapter adapter;
     private List<EmojiGroup> groupList;
 
+    private CustomAvatarAdapter avatarAdapter;
+    private List<CustomAvatarItem> avatarList;
+    private String pendingUinForAvatar = null;
+
     private final androidx.activity.result.ActivityResultLauncher<Intent> editGroupLauncher =
             registerForActivityResult(new androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(), result -> {
                 loadData();
@@ -50,6 +59,39 @@ public class MainActivity extends AppCompatActivity implements EmojiGroupAdapter
                 }
             });
 
+    private final androidx.activity.result.ActivityResultLauncher<String> pickAvatarLauncher =
+            registerForActivityResult(new androidx.activity.result.contract.ActivityResultContracts.GetContent(), uri -> {
+                if (uri != null && pendingUinForAvatar != null && !pendingUinForAvatar.isEmpty()) {
+                    String savedPath = ConfigManager.saveAndCropAvatarImage(MainActivity.this, pendingUinForAvatar, uri);
+                    if (savedPath != null) {
+                        List<CustomAvatarItem> items = ConfigManager.loadCustomAvatars(MainActivity.this);
+                        boolean found = false;
+                        long now = System.currentTimeMillis();
+                        String freshBase64 = ConfigManager.encodeFileToBase64(savedPath);
+                        for (CustomAvatarItem item : items) {
+                            if (item.getUin().equals(pendingUinForAvatar)) {
+                                item.setImagePath(savedPath);
+                                item.setEnabled(true);
+                                item.setLastModified(now);
+                                item.setImageBase64(freshBase64);
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found) {
+                            CustomAvatarItem newItem = new CustomAvatarItem(pendingUinForAvatar, true, savedPath);
+                            newItem.setLastModified(now);
+                            newItem.setImageBase64(freshBase64);
+                            items.add(newItem);
+                        }
+                        ConfigManager.saveCustomAvatars(MainActivity.this, items);
+                        loadCustomAvatarsData();
+                        Toast.makeText(MainActivity.this, R.string.avatar_updated_toast, Toast.LENGTH_SHORT).show();
+                    }
+                }
+                pendingUinForAvatar = null;
+            });
+
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -62,7 +104,8 @@ public class MainActivity extends AppCompatActivity implements EmojiGroupAdapter
             if (getSupportActionBar() != null && versionName != null) {
                 getSupportActionBar().setSubtitle("v" + versionName);
             }
-        } catch (Throwable ignored) {
+        } catch (Exception e) {
+            com.emoji.reactor.util.AppLogger.d("MainActivity", "获取versionName安全跳过: " + e.getMessage());
         }
 
         switchEnable = findViewById(R.id.switch_module_enable);
@@ -74,8 +117,9 @@ public class MainActivity extends AppCompatActivity implements EmojiGroupAdapter
         btnResetMenuIcon = findViewById(R.id.btn_reset_menu_icon);
         ExtendedFloatingActionButton fabAdd = findViewById(R.id.fab_add_group);
 
-        // 预先导出默认粉萌图标
+        // 预先导出默认粉萌图标并同步全量配置与头像镜像至 QQ 媒体目录
         ConfigManager.ensureDefaultMenuIconExported(this);
+        ConfigManager.syncFullConfigToFile(this);
 
         if (btnChangeMenuIcon != null) {
             btnChangeMenuIcon.setOnClickListener(v -> pickImageLauncher.launch("image/*"));
@@ -101,6 +145,79 @@ public class MainActivity extends AppCompatActivity implements EmojiGroupAdapter
             Toast.makeText(MainActivity.this, isChecked ? R.string.module_enabled_toast : R.string.module_disabled_toast, Toast.LENGTH_SHORT).show();
         });
 
+        // 初始化子功能特征开关状态
+        SwitchMaterial switchReaction = findViewById(R.id.switch_feature_reaction);
+        SwitchMaterial switchFlashPic = findViewById(R.id.switch_feature_flash_pic);
+        SwitchMaterial switchAntiRecall = findViewById(R.id.switch_feature_anti_recall);
+
+        if (switchReaction != null) {
+            switchReaction.setChecked(ConfigManager.isFeatureEnabled(this, BatchReactionFeature.KEY, true));
+            switchReaction.setOnCheckedChangeListener((btn, isChecked) -> {
+                ConfigManager.setFeatureEnabled(MainActivity.this, BatchReactionFeature.KEY, isChecked);
+            });
+        }
+
+        if (switchFlashPic != null) {
+            switchFlashPic.setChecked(ConfigManager.isFeatureEnabled(this, FlashPicFeature.KEY, true));
+            switchFlashPic.setOnCheckedChangeListener((btn, isChecked) -> {
+                ConfigManager.setFeatureEnabled(MainActivity.this, FlashPicFeature.KEY, isChecked);
+            });
+        }
+
+        if (switchAntiRecall != null) {
+            switchAntiRecall.setChecked(ConfigManager.isFeatureEnabled(this, AntiRecallFeature.KEY, true));
+            switchAntiRecall.setOnCheckedChangeListener((btn, isChecked) -> {
+                ConfigManager.setFeatureEnabled(MainActivity.this, AntiRecallFeature.KEY, isChecked);
+            });
+        }
+
+        SwitchMaterial switchCustomAvatar = findViewById(R.id.switch_feature_custom_avatar);
+        if (switchCustomAvatar != null) {
+            switchCustomAvatar.setChecked(ConfigManager.isFeatureEnabled(this, CustomAvatarFeature.KEY, true));
+            switchCustomAvatar.setOnCheckedChangeListener((btn, isChecked) -> {
+                ConfigManager.setFeatureEnabled(MainActivity.this, CustomAvatarFeature.KEY, isChecked);
+            });
+        }
+
+        // 初始化单向自定义头像列表与管理交互
+        RecyclerView rvCustomAvatars = findViewById(R.id.recycler_view_custom_avatars);
+        if (rvCustomAvatars != null) {
+            avatarAdapter = new CustomAvatarAdapter();
+            avatarAdapter.setListener(new CustomAvatarAdapter.OnAvatarActionListener() {
+                @Override
+                public void onChangeAvatar(CustomAvatarItem item) {
+                    pendingUinForAvatar = item.getUin();
+                    pickAvatarLauncher.launch("image/*");
+                }
+
+                @Override
+                public void onRestoreAvatar(CustomAvatarItem item) {
+                    new MaterialAlertDialogBuilder(MainActivity.this)
+                            .setTitle(R.string.dialog_restore_confirm_title)
+                            .setMessage(getString(R.string.dialog_restore_confirm_msg, item.getUin()))
+                            .setPositiveButton(R.string.dialog_restore_positive_btn, (d, w) -> {
+                                ConfigManager.removeCustomAvatar(MainActivity.this, item.getUin());
+                                loadCustomAvatarsData();
+                                Toast.makeText(MainActivity.this, R.string.avatar_removed_toast, Toast.LENGTH_SHORT).show();
+                            })
+                            .setNegativeButton(android.R.string.cancel, null)
+                            .show();
+                }
+
+                @Override
+                public void onToggleAvatar(CustomAvatarItem item, boolean isChecked) {
+                    ConfigManager.setCustomAvatarEnabled(MainActivity.this, item.getUin(), isChecked);
+                }
+            });
+            rvCustomAvatars.setLayoutManager(new LinearLayoutManager(this));
+            rvCustomAvatars.setAdapter(avatarAdapter);
+        }
+
+        com.google.android.material.button.MaterialButton btnAddAvatar = findViewById(R.id.btn_add_custom_avatar);
+        if (btnAddAvatar != null) {
+            btnAddAvatar.setOnClickListener(v -> showAddAvatarDialog());
+        }
+
         // 点击新建方案
         fabAdd.setOnClickListener(v -> {
             Intent intent = new Intent(MainActivity.this, EditGroupActivity.class);
@@ -120,6 +237,8 @@ public class MainActivity extends AppCompatActivity implements EmojiGroupAdapter
         groupList = ConfigManager.loadGroups(this);
         adapter.setData(groupList);
 
+        loadCustomAvatarsData();
+
         if (tvEmojiStats != null) {
             int officialCount = com.emoji.reactor.data.HybridEmojiRepository.getOfficialFaceCount();
             int dynamicCount = com.emoji.reactor.data.HybridEmojiRepository.getDynamicallyCapturedCount(this);
@@ -127,6 +246,36 @@ public class MainActivity extends AppCompatActivity implements EmojiGroupAdapter
         }
 
         updateMenuIconUi();
+    }
+
+    private void loadCustomAvatarsData() {
+        if (avatarAdapter != null) {
+            avatarList = ConfigManager.loadCustomAvatars(this);
+            avatarAdapter.setData(avatarList);
+        }
+    }
+
+    private void showAddAvatarDialog() {
+        android.widget.EditText etUin = new android.widget.EditText(this);
+        etUin.setHint(R.string.dialog_input_uin_hint);
+        etUin.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        int pad = (int) (16 * getResources().getDisplayMetrics().density + 0.5f);
+        etUin.setPadding(pad, pad, pad, pad);
+
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.dialog_input_uin_title)
+                .setView(etUin)
+                .setPositiveButton(R.string.dialog_choose_image_btn, (dialog, which) -> {
+                    String uin = etUin.getText().toString().trim();
+                    if (uin.isEmpty()) {
+                        Toast.makeText(MainActivity.this, R.string.dialog_input_uin_empty_toast, Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    pendingUinForAvatar = uin;
+                    pickAvatarLauncher.launch("image/*");
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
     }
 
     private void updateMenuIconUi() {

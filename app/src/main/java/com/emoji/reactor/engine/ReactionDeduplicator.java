@@ -100,7 +100,8 @@ public class ReactionDeduplicator {
                                 }
                             }
                         }
-                    } catch (Throwable ignored) {
+                    } catch (Exception e) {
+                        AppLogger.d(TAG, "extractSelfLikedEmojiIds 反射安全跳过: " + e.getMessage());
                     }
                 }
             }
@@ -125,7 +126,8 @@ public class ReactionDeduplicator {
                         if (val instanceof Boolean) {
                             return (Boolean) val;
                         }
-                    } catch (Throwable ignored) {
+                    } catch (Exception e) {
+                        AppLogger.d(TAG, "isLikelySelfLiked 反射安全跳过: " + e.getMessage());
                     }
                 }
             }
@@ -150,7 +152,8 @@ public class ReactionDeduplicator {
                         if (val != null) {
                             return String.valueOf(val);
                         }
-                    } catch (Throwable ignored) {
+                    } catch (Exception e) {
+                        AppLogger.d(TAG, "extractEmojiIdFromItem 反射安全跳过: " + e.getMessage());
                     }
                 }
             }

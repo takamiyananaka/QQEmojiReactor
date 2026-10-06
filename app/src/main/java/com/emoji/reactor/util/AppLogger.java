@@ -11,7 +11,7 @@ public class AppLogger {
     public static void d(String tag, String msg) {
         try {
             Log.d(tag, msg);
-        } catch (Throwable ignored) {
+        } catch (Throwable t) {
             System.out.println("[" + tag + "] [DEBUG] " + msg);
         }
     }
@@ -19,7 +19,7 @@ public class AppLogger {
     public static void i(String tag, String msg) {
         try {
             Log.i(tag, msg);
-        } catch (Throwable ignored) {
+        } catch (Throwable t) {
             System.out.println("[" + tag + "] [INFO] " + msg);
         }
     }
@@ -27,7 +27,7 @@ public class AppLogger {
     public static void e(String tag, String msg, Throwable t) {
         try {
             Log.e(tag, msg, t);
-        } catch (Throwable ignored) {
+        } catch (Throwable ex) {
             System.err.println("[" + tag + "] [ERROR] " + msg + (t != null ? ": " + t.getMessage() : ""));
         }
     }

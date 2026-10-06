@@ -13,6 +13,7 @@ import android.os.Build;
 import androidx.core.content.ContextCompat;
 
 import com.emoji.reactor.R;
+import com.emoji.reactor.model.CustomAvatarItem;
 import com.emoji.reactor.model.DefaultPresets;
 import com.emoji.reactor.model.EmojiGroup;
 import com.emoji.reactor.util.AppLogger;
@@ -40,12 +41,57 @@ public class ConfigManager {
     public static final String KEY_GROUPS = "emoji_groups";
     public static final String KEY_ENABLED = "module_enabled";
     public static final String KEY_CUSTOM_ICON = "custom_menu_icon_base64";
+    public static final String KEY_CUSTOM_AVATARS = "custom_avatars";
     public static final String ACTION_CONFIG_CHANGED = "com.emoji.reactor.ACTION_CONFIG_CHANGED";
 
     private static final String JSON_KEY_ID = "id";
     private static final String JSON_KEY_NAME = "name";
     private static final String JSON_KEY_EMOJIS = "emojis";
     private static final String JSON_KEY_DELAY = "delay";
+    private static final java.util.concurrent.ExecutorService sDiskWriteExecutor =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "reactor-disk-writer");
+                t.setPriority(Thread.MIN_PRIORITY);
+                return t;
+            });
+
+    public static boolean isFeatureEnabled(Context context, String key, boolean defaultVal) {
+        if (context == null) return defaultVal;
+        try {
+            SharedPreferences sp = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+            return sp.getBoolean(key, defaultVal);
+        } catch (Throwable t) {
+            return defaultVal;
+        }
+    }
+
+    public static void setFeatureEnabled(Context context, String key, boolean enabled) {
+        if (context == null || key == null) return;
+        try {
+            SharedPreferences sp = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+            sp.edit().putBoolean(key, enabled).apply();
+
+            // 写入 Device Protected Storage (如果系统支持)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                try {
+                    Context deContext = context.createDeviceProtectedStorageContext();
+                    if (deContext != null) {
+                        deContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+                                .edit().putBoolean(key, enabled).apply();
+                    }
+                } catch (Exception e) {
+                    AppLogger.d(TAG, "写入DeviceProtectedStorage安全跳过: " + e.getMessage());
+                }
+            }
+
+            // 同步写入四重穿透共享文件
+            syncFullConfigToFile(context);
+
+            notifyConfigChanged(context);
+        } catch (Exception e) {
+            AppLogger.d(TAG, "setFeatureEnabled 发生异常: " + e.getMessage());
+        }
+    }
 
     public static boolean isModuleEnabled(Context context) {
         if (context == null) return true;
@@ -63,9 +109,160 @@ public class ConfigManager {
             SharedPreferences sp = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
             sp.edit().putBoolean(KEY_ENABLED, enabled).apply();
 
+            // 写入 Device Protected Storage (如果系统支持)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                try {
+                    Context deContext = context.createDeviceProtectedStorageContext();
+                    if (deContext != null) {
+                        deContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+                                .edit().putBoolean(KEY_ENABLED, enabled).apply();
+                    }
+                } catch (Exception e) {
+                    AppLogger.d(TAG, "写入DeviceProtectedStorage安全跳过: " + e.getMessage());
+                }
+            }
+
+            // 同步写入四重穿透共享文件
+            syncFullConfigToFile(context);
+
             // 发送全局广播通知 QQ 端更新
             notifyConfigChanged(context);
-        } catch (Throwable ignored) {
+        } catch (Exception e) {
+            AppLogger.d(TAG, "setModuleEnabled 发生异常: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 将包含所有开关状态、自定义图标与表情方案的全量配置持久化同步至系统共享与媒体目录
+     */
+    public static void syncFullConfigToFile(Context context) {
+        if (context == null) return;
+        Context appCtx = context.getApplicationContext();
+        sDiskWriteExecutor.execute(() -> syncFullConfigInternal(appCtx));
+    }
+
+    private static void writeAtomicTextFile(File targetFile, String content) {
+        if (targetFile == null || content == null) return;
+        try {
+            File parent = targetFile.getParentFile();
+            if (parent != null && !parent.exists()) parent.mkdirs();
+            android.util.AtomicFile atomicFile = new android.util.AtomicFile(targetFile);
+            FileOutputStream fos = atomicFile.startWrite();
+            boolean success = false;
+            try {
+                fos.write(content.getBytes(StandardCharsets.UTF_8));
+                fos.flush();
+                try {
+                    fos.getFD().sync();
+                } catch (Exception e) {
+                    AppLogger.d(TAG, "fos sync 安全跳过: " + e.getMessage());
+                }
+                atomicFile.finishWrite(fos);
+                success = true;
+            } finally {
+                if (!success) {
+                    atomicFile.failWrite(fos);
+                }
+            }
+            try {
+                targetFile.setReadable(true, false);
+                targetFile.setWritable(true, false);
+                targetFile.setLastModified(System.currentTimeMillis());
+            } catch (Exception e) {
+                AppLogger.d(TAG, "writeAtomicTextFile 设置权限回退: " + e.getMessage());
+            }
+        } catch (Exception e) {
+            AppLogger.d(TAG, "writeAtomicTextFile 发生异常: " + e.getMessage());
+        }
+    }
+
+    private static void syncFullConfigInternal(Context context) {
+        if (context == null) return;
+        try {
+            SharedPreferences sp = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+            JSONObject fullConfig = new JSONObject();
+
+            fullConfig.put(KEY_ENABLED, sp.getBoolean(KEY_ENABLED, true));
+            fullConfig.put(KEY_CUSTOM_ICON, sp.getString(KEY_CUSTOM_ICON, ""));
+
+            for (java.util.Map.Entry<String, ?> entry : sp.getAll().entrySet()) {
+                if (entry.getValue() instanceof Boolean) {
+                    fullConfig.put(entry.getKey(), (Boolean) entry.getValue());
+                }
+            }
+
+            String groupsJson = sp.getString(KEY_GROUPS, "[]");
+            fullConfig.put(KEY_GROUPS, new JSONArray(groupsJson));
+
+            String avatarsJson = sp.getString(KEY_CUSTOM_AVATARS, "[]");
+            fullConfig.put(KEY_CUSTOM_AVATARS, new JSONArray(avatarsJson));
+
+            String fullConfigStr = fullConfig.toString();
+
+            // 0. 写入 QQ 自身媒体目录镜像 (AtomicFile 原子写盘)
+            File qqConfigFile = StoragePaths.getQqMediaConfigFile();
+            writeAtomicTextFile(qqConfigFile, fullConfigStr);
+
+            // 同步确保所有头像实体文件均镜像写入 QQ 媒体目录，强制更新并清理已删除项
+            List<CustomAvatarItem> avatarList = loadCustomAvatars(context);
+            java.util.Set<String> activeUinSet = new java.util.HashSet<>();
+            for (CustomAvatarItem aItem : avatarList) {
+                if (aItem != null && !aItem.getUin().isEmpty() && aItem.isEnabled()) {
+                    activeUinSet.add(aItem.getUin());
+                    File qqAvatarF = StoragePaths.getQqAvatarFile(aItem.getUin());
+                    if (!aItem.getImagePath().isEmpty()) {
+                        File srcF = new File(aItem.getImagePath());
+                        if (srcF.exists()) {
+                            Bitmap bm = BitmapFactory.decodeFile(srcF.getAbsolutePath());
+                            if (bm != null) {
+                                saveBitmapToFile(bm, qqAvatarF);
+                                qqAvatarF.setLastModified(aItem.getLastModified());
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 物理清理被删除/禁用的孤儿头像文件
+            File qqAvatarsDir = StoragePaths.getQqMediaAvatarsDir();
+            if (qqAvatarsDir.exists() && qqAvatarsDir.isDirectory()) {
+                File[] orphanFiles = qqAvatarsDir.listFiles();
+                if (orphanFiles != null) {
+                    for (File of : orphanFiles) {
+                        String name = of.getName();
+                        if (name.endsWith(".png")) {
+                            String u = name.substring(0, name.length() - 4);
+                            if (!activeUinSet.contains(u)) {
+                                of.delete();
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 1. 写入外部公开媒体目录镜像 (Scoped Storage)
+            File mediaFile = StoragePaths.getSafeMediaConfigFile();
+            writeAtomicTextFile(mediaFile, fullConfigStr);
+
+            // 2. 写入系统级公共共享目录备份 (Download/QQEmojiReactor)
+            File sharedFile = StoragePaths.getSharedConfigFile();
+            writeAtomicTextFile(sharedFile, fullConfigStr);
+
+            // 3. 确保私有 SharedPreferences 文件对外部可读
+            try {
+                File dataDir = context.getDataDir();
+                File spDir = new File(dataDir, "shared_prefs");
+                File spFile = new File(spDir, PREF_NAME + ".xml");
+                dataDir.setReadable(true, false);
+                dataDir.setExecutable(true, false);
+                spDir.setReadable(true, false);
+                spDir.setExecutable(true, false);
+                spFile.setReadable(true, false);
+            } catch (Exception e) {
+                AppLogger.d(TAG, "设置SP文件权限安全跳过: " + e.getMessage());
+            }
+        } catch (Throwable t) {
+            AppLogger.e(TAG, "syncFullConfigToFile 异常", t);
         }
     }
 
@@ -112,7 +309,8 @@ public class ConfigManager {
                         deContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
                                 .edit().putString(KEY_GROUPS, jsonStr).apply();
                     }
-                } catch (Throwable ignored) {
+                } catch (Exception e) {
+                    AppLogger.d(TAG, "deContext saveGroups 安全跳过: " + e.getMessage());
                 }
             }
 
@@ -126,34 +324,12 @@ public class ConfigManager {
                 spDir.setReadable(true, false);
                 spDir.setExecutable(true, false);
                 spFile.setReadable(true, false);
-            } catch (Throwable ignored) {
+            } catch (Exception e) {
+                AppLogger.d(TAG, "设置SP权限安全跳过: " + e.getMessage());
             }
 
-            // 4. 写入外部公开媒体目录镜像备份 (标准 Scoped Storage 路径)
-            try {
-                File backupFile = com.emoji.reactor.util.StoragePaths.getSafeMediaConfigFile();
-                File parent = backupFile.getParentFile();
-                if (parent != null && !parent.exists()) parent.mkdirs();
-                try (FileOutputStream fos = new FileOutputStream(backupFile)) {
-                    fos.write(jsonStr.getBytes(StandardCharsets.UTF_8));
-                    fos.flush();
-                }
-            } catch (Throwable t) {
-                AppLogger.e(TAG, "写入外部媒体备份异常", t);
-            }
-
-            // 4.1 写入系统级公共共享目录备份 (标准 Download 路径)
-            try {
-                File sharedFile = com.emoji.reactor.util.StoragePaths.getSharedConfigFile();
-                File parent = sharedFile.getParentFile();
-                if (parent != null && !parent.exists()) parent.mkdirs();
-                try (FileOutputStream fos = new FileOutputStream(sharedFile)) {
-                    fos.write(jsonStr.getBytes(StandardCharsets.UTF_8));
-                    fos.flush();
-                }
-            } catch (Throwable t) {
-                AppLogger.e(TAG, "写入公共共享备份异常", t);
-            }
+            // 4. 写入全量配置到外部公开媒体目录与公共共享目录
+            syncFullConfigToFile(context);
 
             // 5. 发送系统广播通知 QQ 进程即刻更新
             notifyConfigChanged(context);
@@ -169,8 +345,15 @@ public class ConfigManager {
         try {
             Intent intent = new Intent(ACTION_CONFIG_CHANGED);
             intent.setPackage("com.tencent.mobileqq");
-            context.sendBroadcast(intent);
-        } catch (Throwable ignored) {
+            intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND | Intent.FLAG_INCLUDE_STOPPED_PACKAGES);
+            if (context != null) {
+                SharedPreferences sp = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+                String avatarsJson = sp.getString(KEY_CUSTOM_AVATARS, "[]");
+                intent.putExtra(KEY_CUSTOM_AVATARS, avatarsJson);
+                context.sendBroadcast(intent);
+            }
+        } catch (Exception e) {
+            AppLogger.d(TAG, "notifyConfigChanged 安全跳过: " + e.getMessage());
         }
     }
 
@@ -221,7 +404,7 @@ public class ConfigManager {
                             try {
                                 int legacyId = Integer.parseInt(strVal);
                                 items.add(new com.emoji.reactor.model.GroupEmojiItem(legacyId));
-                            } catch (Throwable ignored) {
+                            } catch (NumberFormatException e) {
                                 items.add(new com.emoji.reactor.model.GroupEmojiItem(strVal, 1L));
                             }
                         }
@@ -304,7 +487,8 @@ public class ConfigManager {
                         deContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
                                 .edit().putString(KEY_CUSTOM_ICON, base64Str).apply();
                     }
-                } catch (Throwable ignored) {
+                } catch (Exception e) {
+                    AppLogger.d(TAG, "deContext saveCustomMenuIcon 安全跳过: " + e.getMessage());
                 }
             }
 
@@ -340,7 +524,8 @@ public class ConfigManager {
                         deContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
                                 .edit().remove(KEY_CUSTOM_ICON).apply();
                     }
-                } catch (Throwable ignored) {
+                } catch (Exception e) {
+                    AppLogger.d(TAG, "deContext resetCustomMenuIcon 安全跳过: " + e.getMessage());
                 }
             }
 
@@ -365,7 +550,8 @@ public class ConfigManager {
                 SharedPreferences sp = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
                 String b64 = sp.getString(KEY_CUSTOM_ICON, null);
                 if (b64 != null && !b64.isEmpty()) return true;
-            } catch (Throwable ignored) {
+            } catch (Exception e) {
+                AppLogger.d(TAG, "hasCustomMenuIcon 安全跳过: " + e.getMessage());
             }
         }
         File customFile = StoragePaths.getCustomMenuIconFile();
@@ -386,7 +572,8 @@ public class ConfigManager {
                     if (bm != null) return bm;
                 }
             }
-        } catch (Throwable ignored) {
+        } catch (Exception e) {
+            AppLogger.d(TAG, "getCurrentMenuIconBitmap 安全跳过: " + e.getMessage());
         }
 
         File customFile = StoragePaths.getCustomMenuIconFile();
@@ -425,7 +612,263 @@ public class ConfigManager {
                 bm.compress(Bitmap.CompressFormat.PNG, 100, fos);
                 fos.flush();
             }
-        } catch (Throwable ignored) {
+            try {
+                targetFile.setReadable(true, false);
+            } catch (Exception e) {
+                AppLogger.d(TAG, "targetFile setReadable 安全跳过: " + e.getMessage());
+            }
+        } catch (Exception e) {
+            AppLogger.d(TAG, "saveBitmapToFile 安全跳过: " + e.getMessage());
+        }
+    }
+
+    public static List<CustomAvatarItem> loadCustomAvatars(Context context) {
+        List<CustomAvatarItem> list = new ArrayList<>();
+        if (context == null) return list;
+        try {
+            SharedPreferences sp = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+            String jsonStr = sp.getString(KEY_CUSTOM_AVATARS, "[]");
+            if (jsonStr != null && !jsonStr.trim().isEmpty()) {
+                JSONArray arr = new JSONArray(jsonStr);
+                for (int i = 0; i < arr.length(); i++) {
+                    CustomAvatarItem item = CustomAvatarItem.fromJson(arr.getJSONObject(i));
+                    if (item != null && !item.getUin().isEmpty()) {
+                        list.add(item);
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            AppLogger.e(TAG, "loadCustomAvatars 异常", t);
+        }
+        return list;
+    }
+
+    public static String encodeFileToBase64(String filePath) {
+        if (filePath == null || filePath.isEmpty()) return "";
+        try {
+            File f = new File(filePath);
+            if (!f.exists() || f.length() == 0) return "";
+            try (java.io.FileInputStream fis = new java.io.FileInputStream(f)) {
+                byte[] bytes = new byte[(int) f.length()];
+                int r = fis.read(bytes);
+                if (r > 0) {
+                    return android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP);
+                }
+            }
+        } catch (Exception e) {
+            AppLogger.d(TAG, "encodeFileToBase64 安全跳过: " + e.getMessage());
+        }
+        return "";
+    }
+
+    public static boolean saveCustomAvatars(Context context, List<CustomAvatarItem> items) {
+        if (context == null) return false;
+        try {
+            JSONArray arr = new JSONArray();
+            if (items != null) {
+                for (CustomAvatarItem item : items) {
+                    if (item != null && !item.getUin().isEmpty()) {
+                        File f = new File(item.getImagePath());
+                        if (!f.exists() || f.length() == 0) {
+                            f = StoragePaths.getAvatarFile(item.getUin());
+                        }
+                        if (f.exists() && f.length() > 0) {
+                            item.setImagePath(f.getAbsolutePath());
+                            item.setLastModified(f.lastModified());
+                        }
+                        arr.put(item.toJson());
+                    }
+                }
+            }
+            String jsonStr = arr.toString();
+
+            SharedPreferences sp = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+            sp.edit().putString(KEY_CUSTOM_AVATARS, jsonStr).apply();
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                try {
+                    Context deContext = context.createDeviceProtectedStorageContext();
+                    if (deContext != null) {
+                        deContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+                                .edit().putString(KEY_CUSTOM_AVATARS, jsonStr).apply();
+                    }
+                } catch (Exception e) {
+                    AppLogger.d(TAG, "deContext saveCustomAvatars 安全跳过: " + e.getMessage());
+                }
+            }
+
+            syncFullConfigToFile(context);
+            notifyConfigChanged(context);
+            return true;
+        } catch (Throwable t) {
+            AppLogger.e(TAG, "saveCustomAvatars 异常", t);
+            return false;
+        }
+    }
+
+    /**
+     * 从相册选择的 Uri 居中裁剪为 1:1 512x512 高清位图并保存
+     * 具备严格的两阶段下采样 (inSampleSize) 与 EXIF 旋转角自适应校正，彻底杜绝大图 OOM
+     */
+    public static String saveAndCropAvatarImage(Context context, String uin, Uri imageUri) {
+        if (context == null || uin == null || uin.trim().isEmpty() || imageUri == null) return null;
+        uin = uin.trim();
+        Bitmap raw = null;
+        Bitmap rotated = null;
+        Bitmap cropped = null;
+        Bitmap scaled = null;
+        try {
+            // 第一阶段：仅读取边界尺寸计算下采样比率，防止大图瞬间打爆内存
+            BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inJustDecodeBounds = true;
+            try (InputStream isBounds = context.getContentResolver().openInputStream(imageUri)) {
+                if (isBounds == null) return null;
+                BitmapFactory.decodeStream(isBounds, null, opts);
+            }
+
+            int origWidth = opts.outWidth;
+            int origHeight = opts.outHeight;
+            if (origWidth <= 0 || origHeight <= 0) return null;
+
+            int sampleSize = 1;
+            int targetDim = 1024;
+            while ((origWidth / sampleSize) > targetDim || (origHeight / sampleSize) > targetDim) {
+                sampleSize *= 2;
+            }
+
+            opts.inJustDecodeBounds = false;
+            opts.inSampleSize = sampleSize;
+            opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
+
+            // 第二阶段：安全加载采样后的位图
+            try (InputStream is = context.getContentResolver().openInputStream(imageUri)) {
+                if (is == null) return null;
+                raw = BitmapFactory.decodeStream(is, null, opts);
+            }
+            if (raw == null) return null;
+
+            // 第三阶段：检查并矫正相机 EXIF 旋转角
+            int rotateDegree = 0;
+            try (InputStream isExif = context.getContentResolver().openInputStream(imageUri)) {
+                if (isExif != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    android.media.ExifInterface exif = new android.media.ExifInterface(isExif);
+                    int orientation = exif.getAttributeInt(android.media.ExifInterface.TAG_ORIENTATION,
+                            android.media.ExifInterface.ORIENTATION_NORMAL);
+                    if (orientation == android.media.ExifInterface.ORIENTATION_ROTATE_90) rotateDegree = 90;
+                    else if (orientation == android.media.ExifInterface.ORIENTATION_ROTATE_180) rotateDegree = 180;
+                    else if (orientation == android.media.ExifInterface.ORIENTATION_ROTATE_270) rotateDegree = 270;
+                }
+            } catch (Exception e) {
+                AppLogger.d(TAG, "isExif 获取方向安全跳过: " + e.getMessage());
+            }
+
+            if (rotateDegree != 0) {
+                android.graphics.Matrix m = new android.graphics.Matrix();
+                m.postRotate(rotateDegree);
+                rotated = Bitmap.createBitmap(raw, 0, 0, raw.getWidth(), raw.getHeight(), m, true);
+                if (rotated != raw) {
+                    raw.recycle();
+                    raw = rotated;
+                }
+            }
+
+            // 第四阶段：1:1 中心居中裁剪
+            int width = raw.getWidth();
+            int height = raw.getHeight();
+            int minEdge = Math.min(width, height);
+            int x = (width - minEdge) / 2;
+            int y = (height - minEdge) / 2;
+
+            cropped = Bitmap.createBitmap(raw, x, y, minEdge, minEdge);
+            if (cropped != raw) {
+                raw.recycle();
+            }
+
+            scaled = Bitmap.createScaledBitmap(cropped, 512, 512, true);
+            if (scaled != cropped) {
+                cropped.recycle();
+            }
+
+            File targetFile = StoragePaths.getAvatarFile(uin);
+            saveBitmapToFile(scaled, targetFile);
+
+            long now = System.currentTimeMillis();
+            try {
+                targetFile.setLastModified(now);
+            } catch (Exception e) {
+                AppLogger.d(TAG, "targetFile setLastModified 安全跳过: " + e.getMessage());
+            }
+
+            try {
+                File qqAvatarFile = StoragePaths.getQqAvatarFile(uin);
+                saveBitmapToFile(scaled, qqAvatarFile);
+                qqAvatarFile.setLastModified(now);
+            } catch (Exception e) {
+                AppLogger.d(TAG, "qqAvatarFile setLastModified 安全跳过: " + e.getMessage());
+            }
+
+            try {
+                File sharedMirror = new File(StoragePaths.getSharedAvatarsDir(), uin + ".png");
+                saveBitmapToFile(scaled, sharedMirror);
+                sharedMirror.setLastModified(now);
+            } catch (Exception e) {
+                AppLogger.d(TAG, "sharedMirror setLastModified 安全跳过: " + e.getMessage());
+            }
+
+            // 保持内存缓存更新
+            BitmapCacheManager.loadBitmap(targetFile.getAbsolutePath(), 512, 512);
+
+            return targetFile.getAbsolutePath();
+        } catch (Throwable t) {
+            AppLogger.e(TAG, "saveAndCropAvatarImage 异常: " + uin, t);
+            return null;
+        } finally {
+            if (scaled != null && !scaled.isRecycled()) {
+                // scaled 已保存文件，可保留或由系统回收
+            }
+        }
+    }
+
+    public static void removeCustomAvatar(Context context, String uin) {
+        if (context == null || uin == null || uin.trim().isEmpty()) return;
+        uin = uin.trim();
+        List<CustomAvatarItem> items = loadCustomAvatars(context);
+        boolean removed = false;
+        for (int i = items.size() - 1; i >= 0; i--) {
+            if (items.get(i).getUin().equals(uin)) {
+                items.remove(i);
+                removed = true;
+            }
+        }
+        if (removed) {
+            try {
+                File f = StoragePaths.getAvatarFile(uin);
+                if (f.exists()) f.delete();
+                File qf = StoragePaths.getQqAvatarFile(uin);
+                if (qf.exists()) qf.delete();
+                File sf = new File(StoragePaths.getSharedAvatarsDir(), uin + ".png");
+                if (sf.exists()) sf.delete();
+            } catch (Exception e) {
+                AppLogger.d(TAG, "removeCustomAvatar 物理删除安全跳过: " + e.getMessage());
+            }
+            saveCustomAvatars(context, items);
+        }
+    }
+
+    public static void setCustomAvatarEnabled(Context context, String uin, boolean enabled) {
+        if (context == null || uin == null || uin.trim().isEmpty()) return;
+        uin = uin.trim();
+        List<CustomAvatarItem> items = loadCustomAvatars(context);
+        boolean changed = false;
+        for (CustomAvatarItem item : items) {
+            if (item.getUin().equals(uin)) {
+                item.setEnabled(enabled);
+                changed = true;
+                break;
+            }
+        }
+        if (changed) {
+            saveCustomAvatars(context, items);
         }
     }
 }

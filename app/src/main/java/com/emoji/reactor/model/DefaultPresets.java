@@ -58,7 +58,7 @@ public class DefaultPresets {
         if (context == null || isEmoji(faceId)) return 0;
         try {
             return context.getResources().getIdentifier("face_" + faceId, "drawable", context.getPackageName());
-        } catch (Throwable ignored) {
+        } catch (Exception e) {
             return 0;
         }
     }
@@ -73,7 +73,7 @@ public class DefaultPresets {
         }
         try {
             return new String(Character.toChars(id));
-        } catch (Throwable ignored) {
+        } catch (IllegalArgumentException e) {
             return "";
         }
     }

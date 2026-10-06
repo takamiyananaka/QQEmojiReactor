@@ -103,7 +103,8 @@ public class QQDynamicEmojiDumper {
                         nomedia.createNewFile();
                     }
                 }
-            } catch (Throwable ignored) {
+            } catch (Exception e) {
+                AppLogger.d(TAG, "ensureNomediaLocks 创建.nomedia安全跳过: " + e.getMessage());
             }
         }
     }
@@ -127,7 +128,8 @@ public class QQDynamicEmojiDumper {
                                     handleAniStickerMethodInvoked(param);
                                 }
                             });
-                        } catch (Throwable ignored) {
+                        } catch (Exception e) {
+                            AppLogger.d(TAG, "hook AniSticker 方法安全跳过: " + e.getMessage());
                         }
                     }
                 }
@@ -151,7 +153,8 @@ public class QQDynamicEmojiDumper {
                                     handleComponentBindInvoked(param);
                                 }
                             });
-                        } catch (Throwable ignored) {
+                        } catch (Exception e) {
+                            AppLogger.d(TAG, "hook BaseContentComponent bind 安全跳过: " + e.getMessage());
                         }
                     }
                 }
@@ -175,7 +178,8 @@ public class QQDynamicEmojiDumper {
                     }
                     onEmojiDiscovered(stickerId, 1L, name, null, null, ctx);
                 }
-            } catch (Throwable ignored) {
+            } catch (Exception e) {
+                AppLogger.d(TAG, "handleAniStickerMethodInvoked 安全跳过: " + e.getMessage());
             }
         }
     }
@@ -195,7 +199,8 @@ public class QQDynamicEmojiDumper {
                 if (msgRecord != null) {
                     sniffMsgRecordElements(msgRecord);
                 }
-            } catch (Throwable ignored) {
+            } catch (Exception e) {
+                AppLogger.d(TAG, "handleComponentBindInvoked 安全跳过: " + e.getMessage());
             }
         }
     }
@@ -210,10 +215,11 @@ public class QQDynamicEmojiDumper {
             List<?> emojiLikes = null;
             try {
                 emojiLikes = (List<?>) XposedHelpers.getObjectField(msgRecord, "emojiLikesList");
-            } catch (Throwable ignored) {
+            } catch (Exception e) {
                 try {
                     emojiLikes = (List<?>) XposedHelpers.callMethod(msgRecord, "getEmojiLikesList");
-                } catch (Throwable ignored2) {
+                } catch (Exception e2) {
+                    AppLogger.d(TAG, "getEmojiLikesList 安全跳过: " + e2.getMessage());
                 }
             }
             if (emojiLikes != null && !emojiLikes.isEmpty()) {
@@ -225,7 +231,8 @@ public class QQDynamicEmojiDumper {
                         if (emojiId != null && !emojiId.trim().isEmpty()) {
                             onEmojiDiscovered(emojiId.trim(), emojiType, null, null, null, null);
                         }
-                    } catch (Throwable ignored) {
+                    } catch (Exception e) {
+                        AppLogger.d(TAG, "读取emojiLikes元素安全跳过: " + e.getMessage());
                     }
                 }
             }
@@ -234,7 +241,8 @@ public class QQDynamicEmojiDumper {
             List<?> elements = null;
             try {
                 elements = (List<?>) XposedHelpers.getObjectField(msgRecord, "elements");
-            } catch (Throwable ignored) {
+            } catch (Exception e) {
+                AppLogger.d(TAG, "读取elements安全跳过: " + e.getMessage());
             }
             if (elements != null && !elements.isEmpty()) {
                 for (Object elem : elements) {
@@ -250,11 +258,13 @@ public class QQDynamicEmojiDumper {
                             long type = (faceType == 2 || faceIndex >= 1000) ? 2L : 1L;
                             onEmojiDiscovered(String.valueOf(faceIndex), type, faceText, null, null, null);
                         }
-                    } catch (Throwable ignored) {
+                    } catch (Exception e) {
+                        AppLogger.d(TAG, "读取faceElement安全跳过: " + e.getMessage());
                     }
                 }
             }
-        } catch (Throwable ignored) {
+        } catch (Exception e) {
+            AppLogger.d(TAG, "sniffMsgRecordElements 安全跳过: " + e.getMessage());
         }
     }
 
@@ -278,7 +288,8 @@ public class QQDynamicEmojiDumper {
                     discoveredKeys.add(key);
                     return;
                 }
-            } catch (Throwable ignored) {
+            } catch (NumberFormatException e) {
+                AppLogger.d(TAG, "parseInt builtInFaceId 安全跳过: " + e.getMessage());
             }
         }
 
@@ -319,7 +330,8 @@ public class QQDynamicEmojiDumper {
                                     finalPath = targetImgFile.getAbsolutePath();
                                 }
                             }
-                        } catch (Throwable ignored) {
+                        } catch (Exception e) {
+                            AppLogger.d(TAG, "通过localId转换表情安全跳过: " + e.getMessage());
                         }
                     }
 
@@ -330,7 +342,8 @@ public class QQDynamicEmojiDumper {
                             int fid = Integer.parseInt(cleanId);
                             int localId = convertServerToLocal(hostClassLoader, fid);
                             finalName = loadSysFaceDescriptionByLocalId(hostClassLoader, localId);
-                        } catch (Throwable ignored) {
+                        } catch (Exception e) {
+                            AppLogger.d(TAG, "loadSysFaceDescription 安全跳过: " + e.getMessage());
                         }
                     }
 
@@ -375,7 +388,8 @@ public class QQDynamicEmojiDumper {
                     Method m = cls.getMethod("convertToLocal", int.class);
                     return (int) m.invoke(null, serverId);
                 }
-            } catch (Throwable ignored) {
+            } catch (Exception e) {
+                AppLogger.d(TAG, "convertServerToLocal 安全跳过: " + e.getMessage());
             }
         }
         return serverId;
@@ -395,7 +409,8 @@ public class QQDynamicEmojiDumper {
                 if (desc != null && !desc.trim().isEmpty()) {
                     return desc.replace("/", "");
                 }
-            } catch (Throwable ignored) {
+            } catch (Exception e) {
+                AppLogger.d(TAG, "getFaceDescription 安全跳过: " + e.getMessage());
             }
         }
         return "";
@@ -413,7 +428,8 @@ public class QQDynamicEmojiDumper {
                 Method m = utilCls.getMethod("getFaceDrawable", int.class);
                 Object d = m.invoke(null, localId);
                 if (d instanceof Drawable) return (Drawable) d;
-            } catch (Throwable ignored) {
+            } catch (Exception e) {
+                AppLogger.d(TAG, "getFaceDrawable 安全跳过: " + e.getMessage());
             }
         }
         return null;
@@ -451,7 +467,8 @@ public class QQDynamicEmojiDumper {
                 try {
                     ContentResolver cr = context.getContentResolver();
                     cr.call(ConfigContentProvider.CONTENT_URI, ConfigContentProvider.METHOD_SAVE_DYNAMIC_FACES, jsonStr, null);
-                } catch (Throwable ignored) {
+                } catch (Exception e) {
+                    AppLogger.d(TAG, "ContentResolver call METHOD_SAVE_DYNAMIC_FACES 安全跳过: " + e.getMessage());
                 }
             }
 
@@ -490,7 +507,8 @@ public class QQDynamicEmojiDumper {
                     }
                 }
             }
-        } catch (Throwable ignored) {
+        } catch (Exception e) {
+            AppLogger.d(TAG, "loadExistingIndex 安全跳过: " + e.getMessage());
         }
     }
 
@@ -507,7 +525,8 @@ public class QQDynamicEmojiDumper {
                         return String.valueOf(val);
                     }
                 } catch (NoSuchFieldException ignored) {
-                } catch (Throwable ignored) {
+                } catch (Exception e) {
+                    AppLogger.d(TAG, "findStringOrNumberField 读取字段安全跳过: " + e.getMessage());
                 }
             }
             c = c.getSuperclass();
@@ -539,7 +558,8 @@ public class QQDynamicEmojiDumper {
                 bm.compress(Bitmap.CompressFormat.PNG, 100, fos);
                 fos.flush();
             }
-        } catch (Throwable ignored) {
+        } catch (Exception e) {
+            AppLogger.d(TAG, "saveBitmapToPng 安全跳过: " + e.getMessage());
         }
     }
 
@@ -552,7 +572,8 @@ public class QQDynamicEmojiDumper {
                 out.write(buf, 0, len);
             }
             out.flush();
-        } catch (Throwable ignored) {
+        } catch (Exception e) {
+            AppLogger.d(TAG, "copyFile 安全跳过: " + e.getMessage());
         }
     }
 
@@ -565,7 +586,8 @@ public class QQDynamicEmojiDumper {
                 Method getCtx = mobileQQCls.getMethod("getContext");
                 return (Context) getCtx.invoke(null);
             }
-        } catch (Throwable ignored) {
+        } catch (Exception e) {
+            AppLogger.d(TAG, "getHostContext 安全跳过: " + e.getMessage());
         }
         return null;
     }

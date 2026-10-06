@@ -11,8 +11,6 @@ import com.emoji.reactor.model.EmojiGroup;
 import com.emoji.reactor.util.AppLogger;
 
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -49,6 +47,12 @@ public class ReactionExecutor {
             return;
         }
 
+        if (!com.emoji.reactor.hook.RemoteConfigHelper.isModuleEnabled(context) ||
+                !com.emoji.reactor.hook.RemoteConfigHelper.isFeatureEnabled(context, com.emoji.reactor.feature.impl.BatchReactionFeature.KEY, true)) {
+            AppLogger.i(TAG, "模块总开关或批量贴表情子开关已关闭，熔断拒绝执行贴表情任务");
+            return;
+        }
+
         if (!isRunning.compareAndSet(false, true)) {
             showToast(context, "正在执行上一轮贴表情，请稍候...");
             return;
@@ -67,6 +71,7 @@ public class ReactionExecutor {
 
                 if (itemsToApply.isEmpty()) {
                     showToast(context, "当前消息您已全部贴过该方案表情");
+                    isRunning.set(false);
                     return;
                 }
 
@@ -75,83 +80,79 @@ public class ReactionExecutor {
                 int delay = group.getDelayMs();
                 if (delay < 50) delay = 50;
 
-                final CountDownLatch latch = new CountDownLatch(itemsToApply.size());
                 final AtomicInteger realSuccessCount = new AtomicInteger(0);
                 final AtomicInteger alreadySetCount = new AtomicInteger(0);
                 final AtomicBoolean isMuted = new AtomicBoolean(false);
 
-                for (int i = 0; i < itemsToApply.size(); i++) {
-                    if (isMuted.get()) {
-                        // 禁言熔断保护：不再发出后续请求
-                        latch.countDown();
-                        continue;
-                    }
+                // 链式非阻塞调度执行
+                postNextReaction(context, msgRecord, itemsToApply, 0, delay, realSuccessCount, alreadySetCount, isMuted);
 
-                    com.emoji.reactor.model.GroupEmojiItem item = itemsToApply.get(i);
-                    final String emojiId = item.getEmojiId();
-                    final long emojiType = item.getEmojiType();
-
-                    try {
-                        QQKernelProbe.invokeSetMsgEmojiLike(msgRecord, emojiId, emojiType, (code, err) -> {
-                            try {
-                                if (code == 0) {
-                                    realSuccessCount.incrementAndGet();
-                                } else if (code == ERR_EMOJI_ALREADY_SET) {
-                                    alreadySetCount.incrementAndGet();
-                                } else if (code == 1001 || (err != null && (err.contains("禁言") || err.contains("mute") || err.contains("permission")))) {
-                                    isMuted.set(true);
-                                    AppLogger.e(TAG, "检测到禁言或无权限，触发熔断: " + err, null);
-                                }
-                            } finally {
-                                latch.countDown();
-                            }
-                        });
-                    } catch (Throwable t) {
-                        AppLogger.e(TAG, "单个表情发送异常 (ID: " + emojiId + ", Type: " + emojiType + ")", t);
-                        latch.countDown();
-                    }
-
-                    // 两次调用之间的安全间隔休眠（平滑有序发送）
-                    if (i < itemsToApply.size() - 1) {
-                        try {
-                            Thread.sleep(delay);
-                        } catch (InterruptedException ignored) {
-                        }
-                    }
-                }
-
-                // 3. 确定性等待 JNI 异步回调落地（超时看门狗保护）
-                long maxWaitMs = (long) delay * itemsToApply.size() + 1500L;
-                try {
-                    latch.await(maxWaitMs, TimeUnit.MILLISECONDS);
-                } catch (InterruptedException ignored) {
-                }
-
-                if (isMuted.get()) {
-                    showToast(context, "提示：您在当前群已被禁言或无权限贴表情");
-                    return;
-                }
-
-                int success = realSuccessCount.get();
-                int already = alreadySetCount.get();
-
-                if (success > 0 && already > 0) {
-                    showToast(context, "完成！新贴 " + success + " 个 (" + already + " 个此前已贴)");
-                } else if (success > 0) {
-                    showToast(context, "完成！成功贴上 " + success + " 个表情");
-                } else if (already > 0) {
-                    showToast(context, "提示：这几个表情此前您已全部贴过");
-                } else {
-                    showToast(context, "贴表情请求已全部发出");
-                }
-
-            } catch (Throwable t) {
-                AppLogger.e(TAG, "批量贴表情流程异常", t);
-                showToast(context, "贴表情异常: " + t.getMessage());
-            } finally {
+            } catch (Exception e) {
+                AppLogger.e(TAG, "批量贴表情流程异常: " + e.getMessage(), e);
+                showToast(context, "贴表情异常: " + e.getMessage());
                 isRunning.set(false);
             }
         });
+    }
+
+    private static void postNextReaction(Context context, Object msgRecord, List<com.emoji.reactor.model.GroupEmojiItem> items,
+                                         int index, int delay, AtomicInteger successCount, AtomicInteger alreadyCount, AtomicBoolean isMuted) {
+        try {
+            if (index >= items.size() || isMuted.get()) {
+                finishReactionBatch(context, successCount.get(), alreadyCount.get(), isMuted.get());
+                isRunning.set(false);
+                return;
+            }
+
+            com.emoji.reactor.model.GroupEmojiItem item = items.get(index);
+            final String emojiId = item.getEmojiId();
+            final long emojiType = item.getEmojiType();
+
+            try {
+                QQKernelProbe.invokeSetMsgEmojiLike(msgRecord, emojiId, emojiType, (code, err) -> {
+                    if (code == 0) {
+                        successCount.incrementAndGet();
+                    } else if (code == ERR_EMOJI_ALREADY_SET) {
+                        alreadyCount.incrementAndGet();
+                    } else if (code == 1001 || (err != null && (err.contains("禁言") || err.contains("mute") || err.contains("permission")))) {
+                        isMuted.set(true);
+                        AppLogger.e(TAG, "检测到禁言或无权限，触发熔断: " + err, null);
+                    }
+                });
+            } catch (Exception e) {
+                AppLogger.e(TAG, "单个表情发送异常 (ID: " + emojiId + ", Type: " + emojiType + ")", e);
+            }
+
+            if (index + 1 < items.size()) {
+                workerHandler.postDelayed(() -> {
+                    postNextReaction(context, msgRecord, items, index + 1, delay, successCount, alreadyCount, isMuted);
+                }, delay);
+            } else {
+                // 最后一个表情发出后，稍候片刻等 JNI 异步回调落地后统一结算与展示结果
+                workerHandler.postDelayed(() -> {
+                    postNextReaction(context, msgRecord, items, index + 1, delay, successCount, alreadyCount, isMuted);
+                }, Math.max(delay, 500));
+            }
+        } catch (Throwable t) {
+            AppLogger.e(TAG, "postNextReaction 调度链条异常断裂", t);
+            isRunning.set(false);
+        }
+    }
+
+    private static void finishReactionBatch(Context context, int success, int already, boolean muted) {
+        if (muted) {
+            showToast(context, "提示：您在当前群已被禁言或无权限贴表情");
+            return;
+        }
+        if (success > 0 && already > 0) {
+            showToast(context, "完成！新贴 " + success + " 个 (" + already + " 个此前已贴)");
+        } else if (success > 0) {
+            showToast(context, "完成！成功贴上 " + success + " 个表情");
+        } else if (already > 0) {
+            showToast(context, "提示：这几个表情此前您已全部贴过");
+        } else {
+            showToast(context, "贴表情请求已全部发出");
+        }
     }
 
     private static void showToast(Context context, String text) {
@@ -159,7 +160,8 @@ public class ReactionExecutor {
         mainHandler.post(() -> {
             try {
                 Toast.makeText(context, text, Toast.LENGTH_SHORT).show();
-            } catch (Throwable ignored) {
+            } catch (Exception e) {
+                AppLogger.d(TAG, "showToast 安全忽略: " + e.getMessage());
             }
         });
     }
