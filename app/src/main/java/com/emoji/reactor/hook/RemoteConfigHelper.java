@@ -154,11 +154,28 @@ public class RemoteConfigHelper {
 
         // 6. 检查 QQ 自身媒体目录镜像 (Android/media/com.tencent.mobileqq/emoji_reactor/custom_avatars/<uin>.png)
         File qqMediaAvatar = StoragePaths.getQqAvatarFile(targetUin);
-        if (qqMediaAvatar.exists() && qqMediaAvatar.length() > 0 && qqMediaAvatar.canRead()) {
-            String validPath = qqMediaAvatar.getAbsolutePath();
-            memoryCustomAvatarMap.put(id, validPath);
-            AppLogger.i(TAG, "【命中QQ媒体目录头像】ID=" + id + " -> " + validPath);
-            return validPath;
+        if (qqMediaAvatar.exists() && qqMediaAvatar.length() > 0) {
+            if (isFileValid(qqMediaAvatar.getAbsolutePath())) {
+                String validPath = qqMediaAvatar.getAbsolutePath();
+                memoryCustomAvatarMap.put(id, validPath);
+                AppLogger.i(TAG, "【命中QQ媒体目录头像】ID=" + id + " -> " + validPath);
+                return validPath;
+            } else {
+                // 如果媒体目录文件存在但跨应用权限受限，尝试直接以流模式读出并写入私有目录
+                try (FileInputStream fis = new FileInputStream(qqMediaAvatar)) {
+                    byte[] b = new byte[(int) qqMediaAvatar.length()];
+                    int r = fis.read(b);
+                    if (r > 0) {
+                        File written = writeAvatarToQqInternal(null, targetUin, b);
+                        if (written != null && written.exists()) {
+                            String validPath = written.getAbsolutePath();
+                            memoryCustomAvatarMap.put(id, validPath);
+                            AppLogger.i(TAG, "【媒体目录文件转存QQ私有目录成功】ID=" + id + " -> " + validPath);
+                            return validPath;
+                        }
+                    }
+                } catch (Throwable ignored) {}
+            }
         }
 
         // 7. 检查之前 directPath 是否有效

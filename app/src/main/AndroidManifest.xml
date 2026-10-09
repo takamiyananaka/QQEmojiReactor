@@ -50,6 +50,12 @@
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
 
+        <!-- QQ 头像交互裁剪页面 -->
+        <activity
+            android:name=".ui.crop.CropAvatarActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
     </application>
 
 </manifest>

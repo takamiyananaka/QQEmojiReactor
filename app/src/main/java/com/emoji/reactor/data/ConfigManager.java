@@ -184,6 +184,10 @@ public class ConfigManager {
 
             fullConfig.put(KEY_ENABLED, sp.getBoolean(KEY_ENABLED, true));
             fullConfig.put(KEY_CUSTOM_ICON, sp.getString(KEY_CUSTOM_ICON, ""));
+            fullConfig.put("feature_custom_avatar", sp.getBoolean("feature_custom_avatar", true));
+            fullConfig.put("feature_anti_recall", sp.getBoolean("feature_anti_recall", true));
+            fullConfig.put("feature_flash_pic", sp.getBoolean("feature_flash_pic", true));
+            fullConfig.put("feature_batch_reaction", sp.getBoolean("feature_batch_reaction", true));
 
             for (java.util.Map.Entry<String, ?> entry : sp.getAll().entrySet()) {
                 if (entry.getValue() instanceof Boolean) {
@@ -194,8 +198,29 @@ public class ConfigManager {
             String groupsJson = sp.getString(KEY_GROUPS, "[]");
             fullConfig.put(KEY_GROUPS, new JSONArray(groupsJson));
 
-            String avatarsJson = sp.getString(KEY_CUSTOM_AVATARS, "[]");
-            fullConfig.put(KEY_CUSTOM_AVATARS, new JSONArray(avatarsJson));
+            List<CustomAvatarItem> avatarList = loadCustomAvatars(context);
+            JSONArray avatarsArr = new JSONArray();
+            boolean needSaveSp = false;
+            for (CustomAvatarItem aItem : avatarList) {
+                if (aItem != null && !aItem.getUin().isEmpty()) {
+                    if (aItem.getImageBase64().isEmpty()) {
+                        String b64 = encodeFileToBase64(aItem.getImagePath());
+                        if (b64.isEmpty()) {
+                            File af = StoragePaths.getAvatarFile(aItem.getUin());
+                            if (af.exists()) b64 = encodeFileToBase64(af.getAbsolutePath());
+                        }
+                        if (!b64.isEmpty()) {
+                            aItem.setImageBase64(b64);
+                            needSaveSp = true;
+                        }
+                    }
+                    avatarsArr.put(aItem.toJson());
+                }
+            }
+            if (needSaveSp) {
+                sp.edit().putString(KEY_CUSTOM_AVATARS, avatarsArr.toString()).apply();
+            }
+            fullConfig.put(KEY_CUSTOM_AVATARS, avatarsArr);
 
             String fullConfigStr = fullConfig.toString();
 
@@ -204,7 +229,6 @@ public class ConfigManager {
             writeAtomicTextFile(qqConfigFile, fullConfigStr);
 
             // 同步确保所有头像实体文件均镜像写入 QQ 媒体目录，强制更新并清理已删除项
-            List<CustomAvatarItem> avatarList = loadCustomAvatars(context);
             java.util.Set<String> activeUinSet = new java.util.HashSet<>();
             for (CustomAvatarItem aItem : avatarList) {
                 if (aItem != null && !aItem.getUin().isEmpty() && aItem.isEnabled()) {
@@ -676,6 +700,9 @@ public class ConfigManager {
                             item.setImagePath(f.getAbsolutePath());
                             item.setLastModified(f.lastModified());
                         }
+                        if (item.getImageBase64().isEmpty()) {
+                            item.setImageBase64(encodeFileToBase64(item.getImagePath()));
+                        }
                         arr.put(item.toJson());
                     }
                 }
@@ -789,6 +816,25 @@ public class ConfigManager {
                 cropped.recycle();
             }
 
+            boolean success = saveCroppedAvatarBitmap(context, uin, scaled);
+            return success ? StoragePaths.getAvatarFile(uin).getAbsolutePath() : null;
+        } catch (Throwable t) {
+            AppLogger.e(TAG, "saveAndCropAvatarImage 异常: " + uin, t);
+            return null;
+        } finally {
+            if (scaled != null && !scaled.isRecycled()) {
+                // scaled 已保存文件，可保留或由系统回收
+            }
+        }
+    }
+
+    /**
+     * 保存用户交互裁剪后的 512x512 高清位图至多重持久化体系
+     */
+    public static boolean saveCroppedAvatarBitmap(Context context, String uin, Bitmap scaled) {
+        if (context == null || uin == null || uin.trim().isEmpty() || scaled == null || scaled.isRecycled()) return false;
+        uin = uin.trim();
+        try {
             File targetFile = StoragePaths.getAvatarFile(uin);
             saveBitmapToFile(scaled, targetFile);
 
@@ -815,17 +861,36 @@ public class ConfigManager {
                 AppLogger.d(TAG, "sharedMirror setLastModified 安全跳过: " + e.getMessage());
             }
 
-            // 保持内存缓存更新
+            // 保持内存缓存更新 (清除旧缓存防止重复更换同账号头像命中脏缓存)
+            BitmapCacheManager.clearCache();
             BitmapCacheManager.loadBitmap(targetFile.getAbsolutePath(), 512, 512);
 
-            return targetFile.getAbsolutePath();
-        } catch (Throwable t) {
-            AppLogger.e(TAG, "saveAndCropAvatarImage 异常: " + uin, t);
-            return null;
-        } finally {
-            if (scaled != null && !scaled.isRecycled()) {
-                // scaled 已保存文件，可保留或由系统回收
+            // 更新自定义头像列表配置并同步
+            List<CustomAvatarItem> items = loadCustomAvatars(context);
+            String savedPath = targetFile.getAbsolutePath();
+            String freshBase64 = encodeFileToBase64(savedPath);
+            boolean found = false;
+            for (CustomAvatarItem item : items) {
+                if (item.getUin().equals(uin)) {
+                    item.setImagePath(savedPath);
+                    item.setEnabled(true);
+                    item.setLastModified(now);
+                    item.setImageBase64(freshBase64);
+                    found = true;
+                    break;
+                }
             }
+            if (!found) {
+                CustomAvatarItem newItem = new CustomAvatarItem(uin, true, savedPath);
+                newItem.setLastModified(now);
+                newItem.setImageBase64(freshBase64);
+                items.add(newItem);
+            }
+            saveCustomAvatars(context, items);
+            return true;
+        } catch (Throwable t) {
+            AppLogger.e(TAG, "saveCroppedAvatarBitmap 异常: " + uin, t);
+            return false;
         }
     }
 

@@ -152,8 +152,8 @@ public class CustomAvatarFeature extends BaseFeature {
                 XposedHelpers.callStaticMethod(ud, "clearMemoryCache");
                 AppLogger.i(TAG, "【成功清空 QQ 原生 URLDrawable 内存池】");
             }
-        } catch (Exception e) {
-            AppLogger.d(TAG, "clear URLDrawable 缓存跳过: " + e.getMessage());
+        } catch (Throwable t) {
+            AppLogger.d(TAG, "clear URLDrawable 缓存跳过: " + t.getMessage());
         }
 
         // 2. FaceDecoder 全局缓存清空
@@ -173,8 +173,8 @@ public class CustomAvatarFeature extends BaseFeature {
                     }
                 }
             }
-        } catch (Exception e) {
-            AppLogger.d(TAG, "clear FaceDecoder 缓存跳过: " + e.getMessage());
+        } catch (Throwable t) {
+            AppLogger.d(TAG, "clear FaceDecoder 缓存跳过: " + t.getMessage());
         }
 
         // 3. QQAvatarDataServiceImpl 缓存清空
@@ -193,8 +193,8 @@ public class CustomAvatarFeature extends BaseFeature {
                     }
                 }
             }
-        } catch (Exception e) {
-            AppLogger.d(TAG, "clear QQAvatarDataServiceImpl 缓存跳过: " + e.getMessage());
+        } catch (Throwable t) {
+            AppLogger.d(TAG, "clear QQAvatarDataServiceImpl 缓存跳过: " + t.getMessage());
         }
     }
 
@@ -240,8 +240,6 @@ public class CustomAvatarFeature extends BaseFeature {
     public void onInit(ClassLoader cl) throws Throwable {
         sQQClassLoader = cl;
         UidUinHelper.init(cl);
-        clearQqNativeCaches();
-        clearQzoneNativeCaches();
         hookURLDrawable(cl);
         hookFaceDrawableSafe(cl);
         hookQQProAvatarView(cl);
@@ -993,20 +991,28 @@ public class CustomAvatarFeature extends BaseFeature {
                 for (Method m : clazz.getDeclaredMethods()) {
                     String mName = m.getName();
                     if (mName.equals("dispatchDraw") || mName.equals("onDraw") || mName.equals("draw")) {
-                        if (m.getParameterTypes().length == 1 && m.getParameterTypes()[0] == Canvas.class) {
+                        if (m.getParameterTypes().length == 1 && m.getParameterTypes()[0] == Canvas.class && sHookedMethodSet.add(m)) {
                             XposedBridge.hookMethod(m, recentCanvasDrawHook);
                         }
                         continue;
                     }
                     if (mName.equals("onMeasure") || mName.equals("onLayout") || mName.equals("layout")
-                            || mName.equals("onTouchEvent") || mName.equals("dispatchTouchEvent") || mName.equals("onSizeChanged")) {
+                            || mName.equals("onTouchEvent") || mName.equals("dispatchTouchEvent") || mName.equals("onSizeChanged")
+                            || mName.equals("setVisibility") || mName.equals("setAlpha") || mName.equals("setId")
+                            || mName.equals("setEnabled") || mName.equals("setClickable") || mName.equals("setSelected")
+                            || mName.startsWith("get")) {
                         continue;
                     }
-                    boolean isTargetMethod = "y".equals(mName) || "z".equals(mName)
-                            || mName.contains("load") || mName.contains("bind")
-                            || mName.contains("update") || mName.contains("setAvatar")
-                            || mName.contains("setFace");
-                    if (isTargetMethod && m.getParameterTypes().length > 0) {
+                    boolean hasReferenceParam = false;
+                    for (Class<?> pType : m.getParameterTypes()) {
+                        if (!pType.isPrimitive()) {
+                            hasReferenceParam = true;
+                            break;
+                        }
+                    }
+                    if (!hasReferenceParam) continue;
+
+                    if (m.getParameterTypes().length >= 1 && m.getParameterTypes().length <= 3 && sHookedMethodSet.add(m)) {
                         XposedBridge.hookMethod(m, new XC_MethodHook() {
                             @Override
                             protected void afterHookedMethod(MethodHookParam param) throws Throwable {
@@ -1023,6 +1029,7 @@ public class CustomAvatarFeature extends BaseFeature {
                                     rawId = extractRawIdFromObject(target);
                                 }
                                 if (rawId != null) {
+                                    boolean hasConfigured = RemoteConfigHelper.getAllConfiguredUins().contains(rawId);
                                     String custom = RemoteConfigHelper.getCustomAvatarPath(rawId);
                                     if (custom != null) {
                                         Bitmap circleBm = getOrCreateCircleBitmap(rawId, custom);
@@ -1037,7 +1044,7 @@ public class CustomAvatarFeature extends BaseFeature {
                                             }
                                             return;
                                         }
-                                    } else {
+                                    } else if (hasConfigured) {
                                         if (target instanceof ViewGroup) {
                                             applyOverlayToContainer((ViewGroup) target, null, null);
                                         } else if (target instanceof ImageView) {
@@ -1847,7 +1854,7 @@ public class CustomAvatarFeature extends BaseFeature {
             String clsName = v.getClass().getName();
             if (clsName.contains("QQProAvatarView") || clsName.contains("VasAvatar") || clsName.contains("AvatarLayout")
                     || clsName.contains("RecentAvatar") || clsName.contains("AsyncImageView") || clsName.contains("FeedProAvatar")
-                    || clsName.contains("QzoneAvatar") || clsName.contains("AvatarView")) {
+                    || clsName.contains("QzoneAvatar") || clsName.contains("AvatarView") || clsName.contains("UserAvatar")) {
                 if (v instanceof ViewGroup) {
                     applyOverlayToContainer((ViewGroup) v, uin, bm);
                     AppLogger.i(TAG, "【列表专属头像控件覆盖成功】UIN=" + uin);
@@ -1891,7 +1898,7 @@ public class CustomAvatarFeature extends BaseFeature {
             String clsName = v.getClass().getName();
             if (clsName.contains("QQProAvatarView") || clsName.contains("VasAvatar") || clsName.contains("AvatarLayout")
                     || clsName.contains("RecentAvatar") || clsName.contains("AsyncImageView") || clsName.contains("FeedProAvatar")
-                    || clsName.contains("QzoneAvatar") || clsName.contains("AvatarView")) {
+                    || clsName.contains("QzoneAvatar") || clsName.contains("AvatarView") || clsName.contains("UserAvatar")) {
                 if (v instanceof ViewGroup) {
                     applyOverlayToContainer((ViewGroup) v, null, null);
                 } else if (v instanceof ImageView) {
@@ -2317,6 +2324,9 @@ public class CustomAvatarFeature extends BaseFeature {
     private void hookQzone(ClassLoader cl) {
         if (cl == null) return;
         String[] qzoneClasses = {
+                "com.qzone.reborn.feedx.widget.QZoneUserAvatarView",
+                "com.qzone.cover.ui.QzoneAvatarDecorator",
+                "com.qzone.cover.ui.QzoneFacadeDecorator",
                 "com.qzone.reborn.feedpro.widget.avatar.QzoneFeedProAvatarView",
                 "com.qzone.reborn.feedpro.widget.avatar.QzoneAvatarView",
                 "com.qzone.module.feedcomponent.ui.AvatarView",
@@ -2331,6 +2341,37 @@ public class CustomAvatarFeature extends BaseFeature {
             try {
                 Class<?> clazz = XposedHelpers.findClassIfExists(clsName, cl);
                 if (clazz == null) continue;
+
+                // 针对 QzoneAvatarDecorator 与 QzoneFacadeDecorator 权威底层 Drawable 拦截
+                if ("com.qzone.cover.ui.QzoneAvatarDecorator".equals(clsName) || "com.qzone.cover.ui.QzoneFacadeDecorator".equals(clsName)) {
+                    Context appCtx = MainHook.getAppContext();
+                    android.content.res.Resources res = appCtx != null ? appCtx.getResources() : null;
+                    for (Method m : clazz.getDeclaredMethods()) {
+                        if ("i".equals(m.getName()) && m.getParameterTypes().length == 1
+                                && Drawable.class.isAssignableFrom(m.getReturnType()) && sHookedMethodSet.add(m)) {
+                            XposedBridge.hookMethod(m, new XC_MethodHook() {
+                                @Override
+                                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                                    if (!isEnabledRuntime()) return;
+                                    if (param.args == null || param.args.length == 0) return;
+                                    String rawId = extractRawIdFromObject(param.args[0]);
+                                    if (rawId != null) {
+                                        String custom = RemoteConfigHelper.getCustomAvatarPath(rawId);
+                                        if (custom != null) {
+                                            Bitmap bm = getOrCreateCircleBitmap(rawId, custom);
+                                            if (bm != null) {
+                                                param.setResult(new android.graphics.drawable.BitmapDrawable(res, bm));
+                                                AppLogger.i(TAG, "【" + clsName + ".i 拦截头像成功】ID=" + rawId);
+                                            }
+                                        }
+                                    }
+                                }
+                            });
+                        }
+                    }
+                    AppLogger.i(TAG, "已成功挂载 " + clsName + " 探针！");
+                    continue;
+                }
 
                 // 针对 FeedViewBuilder 动态流模型与视图挂载
                 if ("com.qzone.module.feedcomponent.ui.FeedViewBuilder".equals(clsName)) {

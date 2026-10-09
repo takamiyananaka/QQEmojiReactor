@@ -47,4 +47,8 @@
     <string name="dialog_restore_positive_btn">Restore Now</string>
     <string name="dialog_input_uin_empty_toast">QQ number cannot be empty</string>
     <string name="dialog_choose_image_btn">Pick Image</string>
+    <string name="crop_avatar_title">Move and Scale</string>
+    <string name="crop_btn_cancel">Cancel</string>
+    <string name="crop_btn_rotate">Rotate</string>
+    <string name="crop_btn_confirm">Choose</string>
 </resources>

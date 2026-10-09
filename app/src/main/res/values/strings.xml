@@ -47,4 +47,8 @@
     <string name="dialog_restore_positive_btn">立即复原</string>
     <string name="dialog_input_uin_empty_toast">QQ号不能为空</string>
     <string name="dialog_choose_image_btn">选择头像照片</string>
+    <string name="crop_avatar_title">移动和缩放</string>
+    <string name="crop_btn_cancel">取消</string>
+    <string name="crop_btn_rotate">旋转</string>
+    <string name="crop_btn_confirm">选取</string>
 </resources>

@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <!-- 顶部标题栏提示 -->
+    <LinearLayout
+        android:id="@+id/ll_top_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_alignParentTop="true"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:paddingTop="36dp"
+        android:paddingBottom="12dp">
+
+        <TextView
+            android:id="@+id/tv_crop_title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/crop_avatar_title"
+            android:textColor="#FFFFFF"
+            android:textSize="17sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="拖动或双指缩放调整图片"
+            android:textColor="#80FFFFFF"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <!-- 中间全屏交互裁剪画布 -->
+    <com.emoji.reactor.ui.crop.ZoomCropImageView
+        android:id="@+id/zoom_crop_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_above="@id/ll_bottom_bar"
+        android:layout_below="@id/ll_top_bar" />
+
+    <!-- 底部操作栏 (高保真 QQ 头像裁剪交互) -->
+    <RelativeLayout
+        android:id="@+id/ll_bottom_bar"
+        android:layout_width="match_parent"
+        android:layout_height="72dp"
+        android:layout_alignParentBottom="true"
+        android:background="#1A1A1A"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp">
+
+        <!-- 取消 -->
+        <TextView
+            android:id="@+id/btn_crop_cancel"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:layout_alignParentStart="true"
+            android:gravity="center"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:text="@string/crop_btn_cancel"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp" />
+
+        <!-- 旋转 90 度 -->
+        <TextView
+            android:id="@+id/btn_crop_rotate"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:layout_centerInParent="true"
+            android:gravity="center"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:text="@string/crop_btn_rotate"
+            android:textColor="#B3FFFFFF"
+            android:textSize="15sp" />
+
+        <!-- 选取 / 完成 -->
+        <TextView
+            android:id="@+id/btn_crop_confirm"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:layout_alignParentEnd="true"
+            android:gravity="center"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:text="@string/crop_btn_confirm"
+            android:textColor="#1976D2"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+    </RelativeLayout>
+
+</RelativeLayout>

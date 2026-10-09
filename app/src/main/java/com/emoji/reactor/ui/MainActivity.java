@@ -59,35 +59,19 @@ public class MainActivity extends AppCompatActivity implements EmojiGroupAdapter
                 }
             });
 
+    private final androidx.activity.result.ActivityResultLauncher<Intent> cropAvatarLauncher =
+            registerForActivityResult(new androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(), result -> {
+                if (result.getResultCode() == RESULT_OK) {
+                    loadCustomAvatarsData();
+                    Toast.makeText(MainActivity.this, R.string.avatar_updated_toast, Toast.LENGTH_SHORT).show();
+                }
+            });
+
     private final androidx.activity.result.ActivityResultLauncher<String> pickAvatarLauncher =
             registerForActivityResult(new androidx.activity.result.contract.ActivityResultContracts.GetContent(), uri -> {
                 if (uri != null && pendingUinForAvatar != null && !pendingUinForAvatar.isEmpty()) {
-                    String savedPath = ConfigManager.saveAndCropAvatarImage(MainActivity.this, pendingUinForAvatar, uri);
-                    if (savedPath != null) {
-                        List<CustomAvatarItem> items = ConfigManager.loadCustomAvatars(MainActivity.this);
-                        boolean found = false;
-                        long now = System.currentTimeMillis();
-                        String freshBase64 = ConfigManager.encodeFileToBase64(savedPath);
-                        for (CustomAvatarItem item : items) {
-                            if (item.getUin().equals(pendingUinForAvatar)) {
-                                item.setImagePath(savedPath);
-                                item.setEnabled(true);
-                                item.setLastModified(now);
-                                item.setImageBase64(freshBase64);
-                                found = true;
-                                break;
-                            }
-                        }
-                        if (!found) {
-                            CustomAvatarItem newItem = new CustomAvatarItem(pendingUinForAvatar, true, savedPath);
-                            newItem.setLastModified(now);
-                            newItem.setImageBase64(freshBase64);
-                            items.add(newItem);
-                        }
-                        ConfigManager.saveCustomAvatars(MainActivity.this, items);
-                        loadCustomAvatarsData();
-                        Toast.makeText(MainActivity.this, R.string.avatar_updated_toast, Toast.LENGTH_SHORT).show();
-                    }
+                    Intent cropIntent = com.emoji.reactor.ui.crop.CropAvatarActivity.createIntent(MainActivity.this, uri, pendingUinForAvatar);
+                    cropAvatarLauncher.launch(cropIntent);
                 }
                 pendingUinForAvatar = null;
             });

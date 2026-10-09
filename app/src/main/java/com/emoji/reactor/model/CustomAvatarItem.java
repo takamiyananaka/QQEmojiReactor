@@ -79,6 +79,7 @@ public class CustomAvatarItem implements Serializable {
             obj.put("uin", uin);
             obj.put("enabled", enabled);
             obj.put("imagePath", imagePath);
+            obj.put("imageBase64", getImageBase64());
             obj.put("lastModified", lastModified);
         } catch (JSONException ignored) {
         }
@@ -90,9 +91,11 @@ public class CustomAvatarItem implements Serializable {
         String uin = obj.optString("uin", "");
         boolean enabled = obj.optBoolean("enabled", true);
         String imagePath = obj.optString("imagePath", "");
+        String imageBase64 = obj.optString("imageBase64", "");
         long lastModified = obj.optLong("lastModified", System.currentTimeMillis());
 
         CustomAvatarItem item = new CustomAvatarItem(uin, enabled, imagePath);
+        item.setImageBase64(imageBase64);
         item.setLastModified(lastModified);
         return item;
     }
